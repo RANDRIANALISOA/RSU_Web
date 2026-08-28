@@ -1,0 +1,18 @@
+﻿# Python
+venv/
+__pycache__/
+*.pyc
+
+# Bases de donnees (ne jamais versionner)
+*.sqlite
+*.sqlite3
+*.db
+
+# Gros fichiers de donnees
+*.dta
+
+# Uploads, logs, secrets
+uploads/
+instance/
+*.log
+.env

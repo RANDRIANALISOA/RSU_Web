@@ -1,0 +1,1286 @@
+
+// ══════════════════════════════════════════════════════════════════
+//  CALCULS DE BASE
+// ══════════════════════════════════════════════════════════════════
+const TOTAL       = MENAGES.length;
+const CARNET_LABEL   = {1:'Avec carnet (scanné)',2:'Avec carnet (non scanné)',3:'Sans carnet',4:'Ne sait pas'};
+const CARNET_COLOR   = {1:'#2563eb',2:'#0ea5e9',3:'#ef4444',4:'#94a3b8'};
+const PRESENCE_LABEL = {1:'Présent',2:'Absent'};
+const ELEC_LABEL      = {1:'Oui',2:'Non'};
+const COLORS = ['#2563eb','#0ea5e9','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#ec4899','#84cc16','#f97316'];
+
+function colorOf(i){ return COLORS[i - Math.floor(i/COLORS.length)*COLORS.length]; }
+function avg(arr){ return arr.length ? Math.round(arr.reduce((s,v)=>s+v,0)/arr.length) : 0; }
+function pct(n,t){ return t ? Math.round(n/t*100) : 0; }
+function isValidDate(d){ return !!d && /^\d{8}$/.test(d); }
+function formatDate(d){ if(!isValidDate(d)) return '—'; return `${d.slice(6,8)}/${d.slice(4,6)}/${d.slice(0,4)}`; }
+function hasCarnet(m){ return m.carnet===1 || m.carnet===2; }
+function fktDisplay(m){ return (m.fkt && m.fkt.trim()) ? m.fkt : (m.fktcode||'(fokontany inconnu)'); }
+function communeOf(m){ return (m.commune && m.commune.trim()) ? m.commune : '(commune inconnue)'; }
+function escJs(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+function safeId(s){ return String(s).replace(/[^a-zA-Z0-9]/g,'_'); }
+
+const agentList = [...new Set(MENAGES.map(m=>m.agent).filter(Boolean))].sort();
+const dateList  = [...new Set(MENAGES.map(m=>m.date).filter(isValidDate))].sort();
+function fktKeyOf(m){ return m.fktcode || m.fkt || ''; }
+
+// Libellé de chaque fokontany : nom si disponible, sinon code
+const fktLabelMap = new Map();
+MENAGES.forEach(m=>{
+  const key = fktKeyOf(m);
+  if(!key) return;
+  if(!fktLabelMap.has(key)) fktLabelMap.set(key, fktDisplay(m));
+});
+
+// Hiérarchie Commune -> Fokontany, construite à partir de MENAGES
+let communeList = [...new Set(MENAGES.map(communeOf))].sort((a,b)=>a.localeCompare(b,'fr'));
+const fktByCommune = new Map(); // commune -> Map(fktcode -> label)
+MENAGES.forEach(m=>{
+  const comm = communeOf(m);
+  const key  = fktKeyOf(m);
+  if(!key) return;
+  if(!fktByCommune.has(comm)) fktByCommune.set(comm, new Map());
+  const mm = fktByCommune.get(comm);
+  if(!mm.has(key)) mm.set(key, fktLabelMap.get(key)||key);
+});
+
+// Nom de commune -> code commune (6 premiers chiffres du num_fkt), pour retrouver
+// la limite de commune dans LIMITES_COMMUNE (clé = code commune).
+const communeCodeMap = new Map();
+MENAGES.forEach(m=>{
+  const comm = communeOf(m);
+  const key  = fktKeyOf(m);
+  if(key && key.length>=6 && !communeCodeMap.has(comm)) communeCodeMap.set(comm, key.slice(0,6));
+});
+
+// Complétude géographique (web) : fusionne le référentiel `zones` complet du
+// district (ZONES_REF) pour afficher TOUTES les communes/fokontany, même sans
+// ménage dénombré — afin de repérer les zones oubliées. Inerte si ZONES_REF est
+// absent (rapport exe / fokontany : comportement identique à avant).
+if(typeof ZONES_REF !== 'undefined' && Array.isArray(ZONES_REF)){
+  ZONES_REF.forEach(z=>{
+    const comm = (z.commune && String(z.commune).trim()) ? z.commune : '(commune inconnue)';
+    const key  = z.fkt;
+    if(!key) return;
+    if(!fktByCommune.has(comm)) fktByCommune.set(comm, new Map());
+    const mm = fktByCommune.get(comm);
+    if(!mm.has(key)) mm.set(key, z.label || key);
+    if(!fktLabelMap.has(key)) fktLabelMap.set(key, z.label || key);
+    if(z.ccode && !communeCodeMap.has(comm)) communeCodeMap.set(comm, z.ccode);
+  });
+  communeList = [...fktByCommune.keys()].sort((a,b)=>a.localeCompare(b,'fr'));
+}
+
+// Segments agrégés à partir de MENAGES.
+// ⚠️ Le fokontany est un attribut *par ménage* : un même segment (sid) peut
+// couvrir des ménages de plusieurs fokontany (fréquent : ~48 % des segments à
+// Mampikony). On agrège donc par couple (sid × fokontany) et non par sid seul,
+// sinon un segment à cheval n'est rattaché qu'à un seul fokontany (le premier vu)
+// et les pages filtrées par fokontany (Par Agent, Vue générale) apparaissent
+// vides pour les autres fokontany qu'il touche.
+const segMap = new Map();
+MENAGES.forEach(m=>{
+  const fc  = fktKeyOf(m);
+  const key = m.sid+'|'+fc;   // 1 tranche par (segment, fokontany)
+  if(!segMap.has(key)){
+    segMap.set(key, {sid:m.sid, agent:m.agent, region:m.region, district:m.district, commune:communeOf(m),
+      fkt:m.fkt, fktcode:fc, seg:m.seg, statut:m.statut, rejet:m.rejet, tps:m.tps, bats:new Set(), n:0, nPresent:0, nCarnet:0,
+      lats:[], lons:[]});
+  }
+  const s = segMap.get(key);
+  s.n++;
+  if(m.presence===1) s.nPresent++;
+  if(hasCarnet(m)) s.nCarnet++;
+  if(m.bat) s.bats.add(m.bat);
+  if(m.lat && Math.abs(m.lat)<90 && m.lon && Math.abs(m.lon)<180){ s.lats.push(m.lat); s.lons.push(m.lon); }
+});
+// Dashboard allégé : si le serveur fournit l'agrégat (SEGMENTS_AGG), on l'utilise
+// tel quel (chaque ligne a `batsN` au lieu du Set `bats`) ; sinon on garde
+// l'agrégat construit ci-dessus depuis MENAGES (exe / fokontany).
+let SEGMENTS = [...segMap.values()];
+if(typeof SEGMENTS_AGG !== 'undefined') SEGMENTS = SEGMENTS_AGG;
+// Nombre réel de segments distincts (un segment à cheval sur 2 fokontany ne
+// compte que pour 1), pour l'affichage « nombre de segments » de la sidebar.
+const NB_SEGMENTS = new Set(MENAGES.map(m=>m.sid)).size;
+
+// ══════════════════════════════════════════════════════════════════
+//  FILTRAGE (commune et/ou fokontany)
+// ══════════════════════════════════════════════════════════════════
+// f.none => aucune sélection (invite) ; sinon f.fkt => fokontany, f.commune => commune,
+// et f vide {} => ensemble de la base de données.
+function dataForFilter(f){
+  if(!f || f.none) return [];
+  if(f.fkt) return MENAGES.filter(m=>fktKeyOf(m)===f.fkt);
+  if(f.commune) return MENAGES.filter(m=>communeOf(m)===f.commune);
+  return MENAGES;
+}
+function segsForFilter(f){
+  if(!f || f.none) return [];
+  if(f.fkt) return SEGMENTS.filter(s=>s.fktcode===f.fkt);
+  if(f.commune) return SEGMENTS.filter(s=>s.commune===f.commune);
+  return SEGMENTS;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  NAVIGATION (pages)
+// ══════════════════════════════════════════════════════════════════
+const pageTitles = {
+  'page-general':   'Vue générale',
+  'page-agent':     'Détail par Agent Recenseur',
+  'page-zone':      'Récapitulatif par Zone / Segment',
+  'page-gps':       'Carte GPS du dénombrement',
+  'page-qualite':   'Qualité des données',
+  'page-historique':'Historique de la collecte',
+  'page-multi':     'Segments multiples',
+  'page-gpscap':    'Taux de capture GPS',
+};
+
+function showPage(id,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if(btn) btn.classList.add('active');
+  document.getElementById('page-title').textContent = pageTitles[id]||'';
+
+  // n'afficher le sous-menu Commune/Fokontany que pour la page active
+  ['general','agent','gps','multi','gpscap'].forEach(p=>{
+    const el = document.getElementById(p+'-drill');
+    if(el) el.style.display = (id==='page-'+p) ? 'block' : 'none';
+  });
+
+  // À l'ouverture de ces pages : on repart de l'ensemble de la base (aucune
+  // sélection commune/fokontany) et on affiche directement le résultat global.
+  ['general','agent','gps','gpscap'].forEach(p=>{
+    if(id==='page-'+p){
+      const st = drillState[p];
+      st.selCommune=null; st.selFkt=null; st.expanded=null;
+      renderDrill(p);
+      dispatchSelection(p);
+    }
+  });
+
+  if(id==='page-gps') setTimeout(()=>{
+    if(map){
+      map.invalidateSize();
+      if(allMarkers && allMarkers.length){ const fg=L.featureGroup(allMarkers); map.fitBounds(fg.getBounds().pad(0.15)); }
+    }
+  },250);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  MENU DÉROULANT COMMUNE → FOKONTANY (sidebar)
+// ══════════════════════════════════════════════════════════════════
+const drillState = {
+  general: {expanded:null, selCommune:null, selFkt:null},
+  agent:   {expanded:null, selCommune:null, selFkt:null},
+  gps:     {expanded:null, selCommune:null, selFkt:null},
+  multi:   {expanded:null, selCommune:null, selFkt:null},
+  gpscap:  {expanded:null, selCommune:null, selFkt:null},
+};
+
+function renderDrill(prefix){
+  const st = drillState[prefix];
+  const cont = document.getElementById(prefix+'-drill');
+  if(!cont) return;
+  let html = '';
+  communeList.forEach(comm=>{
+    const isExpanded = st.expanded===comm;
+    const isSelComm  = st.selCommune===comm && !st.selFkt;
+    html += `<button class="nav-sub-item commune${isExpanded?' expanded':''}${isSelComm?' active':''}" onclick="toggleCommune('${prefix}','${escJs(comm)}')">${comm}</button>`;
+    if(isExpanded){
+      html += `<div class="nav-sub2">`;
+      const fktMap = fktByCommune.get(comm) || new Map();
+      const codes = [...fktMap.keys()].sort((a,b)=>(fktMap.get(a)||a).localeCompare(fktMap.get(b)||b,'fr'));
+      codes.forEach(code=>{
+        const isSelFkt = st.selFkt===code;
+        html += `<button class="nav-sub-item fkt${isSelFkt?' active':''}" onclick="chooseFkt('${prefix}','${escJs(comm)}','${escJs(code)}')">${fktMap.get(code)}</button>`;
+      });
+      html += `</div>`;
+    }
+  });
+  cont.innerHTML = html;
+}
+
+function toggleCommune(prefix, commune){
+  const st = drillState[prefix];
+  st.expanded = (st.expanded===commune) ? null : commune;
+  // Segment multiple : la commune ne sert qu'à déplier (résultats au fokontany).
+  // Les autres pages affichent le résultat au niveau commune dès ce clic.
+  if(prefix!=='multi'){
+    st.selCommune = commune; st.selFkt = null;
+    renderDrill(prefix);
+    dispatchSelection(prefix);
+    return;
+  }
+  renderDrill(prefix);
+}
+function chooseFkt(prefix, commune, fkt){
+  const st = drillState[prefix];
+  st.selCommune=commune; st.selFkt=fkt; st.expanded=commune;
+  renderDrill(prefix);
+  dispatchSelection(prefix);
+}
+
+function currentFilter(prefix){
+  const st = drillState[prefix];
+  if(st.selFkt) return {commune:st.selCommune, fkt:st.selFkt};
+  if(st.selCommune) return {commune:st.selCommune};
+  // Segment multiple exige un fokontany ; les autres pages ont un niveau « base ».
+  if(prefix==='multi') return {none:true};
+  return {};
+}
+
+function dispatchSelection(prefix){
+  const f = currentFilter(prefix);
+  if(prefix==='general') renderGeneral(f);
+  if(prefix==='agent')    renderAgentSection(f);
+  if(prefix==='gps')      renderGpsSection(f);
+  if(prefix==='multi')    renderMultiSection(f);
+  if(prefix==='gpscap')   renderGpsCaptureSection(f);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  EN-TÊTE / SIDEBAR
+// ══════════════════════════════════════════════════════════════════
+function initHeader(){
+  const ds = META.date_rapport || '';
+  document.getElementById('top-date').textContent = ds;
+  // En mode allégé (SUMMARY présent, MENAGES vide), agents/segments viennent de
+  // l'agrégat ; communes/fokontany restent comptés via ZONES_REF (référentiel).
+  const nAg  = (typeof SUMMARY!=='undefined') ? SUMMARY.general.nAgents   : agentList.length;
+  const nSeg = (typeof SUMMARY!=='undefined') ? SUMMARY.general.nbSegments : NB_SEGMENTS;
+  document.getElementById('sidebar-info').innerHTML =
+    `<strong>${META.projet||'RSU 2026'}</strong><br/>
+     ${nAg} agents recenseurs<br/>
+     ${nSeg} segments · ${communeList.length} communes · ${fktLabelMap.size} fokontany<br/>
+     Rapport généré le ${ds}`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  GRAPHIQUES — registre commun (destruction avant recréation)
+// ══════════════════════════════════════════════════════════════════
+Chart.defaults.font.family = "'Bricolage Grotesque',sans-serif";
+Chart.defaults.font.size   = 12;
+Chart.defaults.color       = '#64748b';
+
+const chartRegistry = {};
+function mkChart(id, cfg){
+  const ctx = document.getElementById(id);
+  if(!ctx) return;
+  if(chartRegistry[id]){ chartRegistry[id].destroy(); }
+  const c = new Chart(ctx, cfg);
+  chartRegistry[id] = c;
+  return c;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PAGE : VUE GÉNÉRALE
+// ══════════════════════════════════════════════════════════════════
+function scopeLabel(f){
+  if(f && f.label) return f.label;   // mode multi-pages : label de périmètre fourni par le serveur
+  if(f && f.fkt){
+    let nm = f.fkt;
+    const cm = fktByCommune.get(f.commune);
+    if(cm && cm.get(f.fkt)) nm = cm.get(f.fkt);
+    return 'Fokontany : ' + nm;
+  }
+  if(f && f.commune) return 'Commune : ' + f.commune;
+  return 'Ensemble de la base de données';
+}
+
+// Rendu de la Vue générale depuis l'AGRÉGAT serveur (SUMMARY.general) — district/
+// commune allégés. Reproduit à l'identique le rendu « base » de renderGeneral
+// (mêmes KPIs, mêmes 4 graphiques agrégés), sans les stats individuelles par agent
+// (réservées au fokontany). Chiffres prouvés identiques au calcul brut (test_agrege.py).
+// Couverture du dénombrement (réalisé vs projection ménages 2025). Rendu web
+// seulement, quand le serveur injecte COUVERTURE (page « général » district/commune).
+function renderCouverture(){
+  const panel = document.getElementById('couverture-panel');
+  if(!panel) return;
+  if(typeof COUVERTURE === 'undefined' || !COUVERTURE){ panel.style.display='none'; return; }
+  const c = COUVERTURE;
+  const fmt = n => (n==null ? '—' : Number(n).toLocaleString('fr-FR'));
+  const pctTxt = (c.pct==null) ? '—' : c.pct.toFixed(1)+'%';
+  const barPct = (c.pct==null) ? 0 : Math.max(0, Math.min(100, c.pct));
+  const col = c.fiable ? '#10b981' : (c.pct!=null && c.pct>=75 ? '#f59e0b' : '#ef4444');
+  const statut = c.fiable ? '✓ Fiable (≥ 100 %)' : 'À poursuivre (< 100 %)';
+  const jrTxt = c.fiable ? '0'
+              : (c.joursRestants==null ? 'non estimable' : c.joursRestants+' jour(s)');
+  const rythmeTxt = c.rythme ? Math.round(c.rythme).toLocaleString('fr-FR')+'/j' : '—';
+  let html = `
+    <div style="border:1px solid #e5e7eb;border-radius:14px;padding:16px 18px;background:#fff">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="font-weight:700;font-size:15px">Couverture du dénombrement — projection RGHH-3 (2025)</div>
+        <div style="font-weight:700;color:${col}">${statut}</div>
+      </div>
+      <div style="display:flex;gap:26px;flex-wrap:wrap;margin:14px 0 8px">
+        <div><div style="font-size:12px;color:#6b7280">Attendu (ménages 2025)</div><div style="font-size:20px;font-weight:700">${fmt(c.attendu)}</div></div>
+        <div><div style="font-size:12px;color:#6b7280">Ménages dénombrés</div><div style="font-size:20px;font-weight:700">${fmt(c.realise)}</div></div>
+        <div><div style="font-size:12px;color:#6b7280">Taux de couverture</div><div style="font-size:20px;font-weight:700;color:${col}">${pctTxt}</div></div>
+        <div><div style="font-size:12px;color:#6b7280">Jours restants (rythme ${rythmeTxt})</div><div style="font-size:20px;font-weight:700">${jrTxt}</div></div>
+      </div>
+      <div style="height:10px;border-radius:6px;background:#e5e7eb;overflow:hidden">
+        <div style="height:100%;width:${barPct}%;background:${col};transition:width .3s"></div>
+      </div>`;
+  if(c.niveau === 'district' && Array.isArray(c.communes) && c.communes.length > 1){
+    html += `<div style="overflow-x:auto;margin-top:16px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="text-align:left;border-bottom:2px solid #e5e7eb;color:#374151">
+          <th style="padding:7px 8px">Commune</th>
+          <th style="padding:7px 8px;text-align:right">Attendu</th>
+          <th style="padding:7px 8px;text-align:right">Dénombrés</th>
+          <th style="padding:7px 8px;text-align:right">Couverture</th>
+          <th style="padding:7px 8px;text-align:right">Jours restants</th>
+        </tr></thead><tbody>` +
+      c.communes.map(x=>{
+        const xf = x.attendu && x.realise>=x.attendu;
+        const xcol = xf ? '#10b981' : (x.pct!=null && x.pct>=75 ? '#f59e0b' : '#ef4444');
+        const xp = (x.pct==null) ? '—' : x.pct.toFixed(1)+'%';
+        const xjr = xf ? '0' : (x.joursRestants==null ? '—' : x.joursRestants+' j');
+        return `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:7px 8px">${x.nom||x.code}</td>
+          <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace">${fmt(x.attendu)}</td>
+          <td style="padding:7px 8px;text-align:right;font-family:'JetBrains Mono',monospace">${fmt(x.realise)}</td>
+          <td style="padding:7px 8px;text-align:right;font-weight:700;color:${xcol}">${xp}</td>
+          <td style="padding:7px 8px;text-align:right">${xjr}</td>
+        </tr>`;
+      }).join('') +
+      `</tbody></table></div>`;
+  }
+  html += `</div>`;
+  panel.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+function renderGeneralAgg(g){
+  document.getElementById('general-placeholder').style.display='none';
+  document.getElementById('general-results').style.display='block';
+  renderCouverture();
+  document.getElementById('general-scope').textContent =
+    (typeof SCOPE!=='undefined' && SCOPE.label) ? SCOPE.label : 'Ensemble de la base de données';
+
+  const total = g.total;
+  document.getElementById('kpi-total').textContent    = total;
+  document.getElementById('kpi-presents').textContent = g.nbPresents;
+  document.getElementById('kpi-carnet').textContent   = g.nbCarnet;
+  document.getElementById('kpi-segments').textContent = g.nbSegments;
+  document.getElementById('kpi-tps').textContent      = g.tps;
+  document.getElementById('kpi-total-sub').textContent    = g.nAgents+' agents actifs';
+  document.getElementById('kpi-presents-pct').textContent = pct(g.nbPresents,total)+'%';
+  document.getElementById('kpi-carnet-pct').textContent   = pct(g.nbCarnet,total)+'%';
+  document.getElementById('kpi-batiments-sub').textContent= g.nbBat+' bâtiments';
+
+  const labels = g.dates.map(d=>formatDate(d));
+  mkChart('chart-line-date',{ type:'line',
+    data:{ labels, datasets:[
+        {label:'Ménages dénombrés',data:g.daily.map(x=>x.total),
+         borderColor:'#2563eb',backgroundColor:'#2563eb20',fill:true,tension:0.4,pointRadius:4,pointBackgroundColor:'#2563eb'},
+        {label:'Présents',data:g.daily.map(x=>x.present),
+         borderColor:'#10b981',backgroundColor:'transparent',tension:0.4,pointRadius:4,pointBackgroundColor:'#10b981'},
+      ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12}}},scales:{y:{beginAtZero:true}}}
+  });
+  mkChart('chart-agents-day',{ type:'bar',
+    data:{ labels, datasets:[{label:'Agents actifs',data:g.agentsPerDay.map(x=>x.n),backgroundColor:'#8b5cf6',borderRadius:5}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}
+  });
+  mkChart('chart-donut-presence',{ type:'doughnut',
+    data:{labels:['Présent','Absent'],datasets:[{data:[g.presence[0],g.presence[1]],
+      backgroundColor:['#10b981','#ef4444'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'68%',
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:14}}}}
+  });
+  mkChart('chart-donut-carnet',{ type:'doughnut',
+    data:{labels:[1,2,3,4].map(c=>CARNET_LABEL[c]),datasets:[{data:g.carnet,
+      backgroundColor:[1,2,3,4].map(c=>CARNET_COLOR[c]),borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'68%',
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12}}}}
+  });
+  document.getElementById('general-agent-blocks').style.display='none';
+}
+
+function renderGeneral(f){
+  const placeholder = document.getElementById('general-placeholder');
+  const results = document.getElementById('general-results');
+  if(!f || f.none){ placeholder.style.display='block'; results.style.display='none';
+    const cp=document.getElementById('couverture-panel'); if(cp) cp.style.display='none'; return; }
+  if(typeof SUMMARY !== 'undefined'){ renderGeneralAgg(SUMMARY.general); return; }
+  placeholder.style.display='none'; results.style.display='block';
+  renderCouverture();
+
+  const isFkt = !!(f && (f.fkt || f.isFkt));   // les stats individuelles par agent : fokontany uniquement
+  const ms   = dataForFilter(f);
+  const segs = segsForFilter(f);
+  const localAgents = [...new Set(ms.map(m=>m.agent).filter(Boolean))].sort();
+  const localDates  = [...new Set(ms.map(m=>m.date).filter(isValidDate))].sort();
+  const total = ms.length;
+
+  document.getElementById('general-scope').textContent = scopeLabel(f);
+
+  const nbPresents = ms.filter(m=>m.presence===1).length;
+  const nbCarnet   = ms.filter(hasCarnet).length;
+  const tpsArr     = segs.filter(s=>s.tps>0).map(s=>s.tps);
+  const nbBat      = new Set(ms.map(m=>m.sid+'-'+m.bat)).size;
+
+  document.getElementById('kpi-total').textContent       = total;
+  document.getElementById('kpi-presents').textContent    = nbPresents;
+  document.getElementById('kpi-carnet').textContent      = nbCarnet;
+  document.getElementById('kpi-segments').textContent    = segs.length;
+  document.getElementById('kpi-tps').textContent         = avg(tpsArr);
+
+  document.getElementById('kpi-total-sub').textContent    = localAgents.length+' agents actifs';
+  document.getElementById('kpi-presents-pct').textContent = pct(nbPresents,total)+'%';
+  document.getElementById('kpi-carnet-pct').textContent   = pct(nbCarnet,total)+'%';
+  document.getElementById('kpi-batiments-sub').textContent= nbBat+' bâtiments';
+
+  // ── Graphiques agrégés (visibles à tous les niveaux) ──
+  mkChart('chart-line-date',{
+    type:'line',
+    data:{ labels: localDates.map(d=>formatDate(d)),
+      datasets:[
+        {label:'Ménages dénombrés',data:localDates.map(d=>ms.filter(m=>m.date===d).length),
+         borderColor:'#2563eb',backgroundColor:'#2563eb20',fill:true,tension:0.4,pointRadius:4,pointBackgroundColor:'#2563eb'},
+        {label:'Présents',    data:localDates.map(d=>ms.filter(m=>m.date===d&&m.presence===1).length),
+         borderColor:'#10b981',backgroundColor:'transparent',tension:0.4,pointRadius:4,pointBackgroundColor:'#10b981'},
+      ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12}}},
+      scales:{y:{beginAtZero:true}}}
+  });
+
+  // Histogramme : nombre d'agents actifs par jour.
+  mkChart('chart-agents-day',{
+    type:'bar',
+    data:{ labels: localDates.map(d=>formatDate(d)),
+      datasets:[{label:'Agents actifs',
+        data:localDates.map(d=>new Set(ms.filter(m=>m.date===d).map(m=>m.agent).filter(Boolean)).size),
+        backgroundColor:'#8b5cf6',borderRadius:5}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{y:{beginAtZero:true,ticks:{precision:0}}}}
+  });
+
+  mkChart('chart-donut-presence',{
+    type:'doughnut',
+    data:{labels:['Présent','Absent'],
+      datasets:[{data:[ms.filter(m=>m.presence===1).length,ms.filter(m=>m.presence===2).length],
+        backgroundColor:['#10b981','#ef4444'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'68%',
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:14}}}}
+  });
+
+  mkChart('chart-donut-carnet',{
+    type:'doughnut',
+    data:{labels:[1,2,3,4].map(c=>CARNET_LABEL[c]),
+      datasets:[{data:[1,2,3,4].map(c=>ms.filter(m=>m.carnet===c).length),
+        backgroundColor:[1,2,3,4].map(c=>CARNET_COLOR[c]),borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'68%',
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12}}}}
+  });
+
+  // ── Statistiques individuelles par agent : uniquement au niveau fokontany ──
+  const agentBlocks = document.getElementById('general-agent-blocks');
+  agentBlocks.style.display = isFkt ? 'block' : 'none';
+  if(!isFkt) return;
+
+  mkChart('chart-bar-agent',{
+    type:'bar',
+    data:{ labels: localAgents,
+      datasets:[
+        {label:'Total',        data:localAgents.map(a=>ms.filter(m=>m.agent===a).length),                       backgroundColor:'#3b82f680',borderColor:'#3b82f6',borderWidth:2},
+        {label:'Présents',     data:localAgents.map(a=>ms.filter(m=>m.agent===a&&m.presence===1).length),        backgroundColor:'#10b98180',borderColor:'#10b981',borderWidth:2},
+        {label:'Avec carnet',  data:localAgents.map(a=>ms.filter(m=>m.agent===a&&hasCarnet(m)).length),          backgroundColor:'#f59e0b80',borderColor:'#f59e0b',borderWidth:2},
+      ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12}}},
+      scales:{y:{beginAtZero:true}}}
+  });
+
+  mkChart('chart-tps-agent',{
+    type:'bar',
+    data:{labels: localAgents,
+      datasets:[{label:'Minutes',
+        data:localAgents.map(a=>avg(segs.filter(x=>x.agent===a && x.tps>0).map(x=>x.tps))),
+        backgroundColor: localAgents.map((a,i)=>colorOf(i)), borderRadius:6}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{y:{beginAtZero:true}}}
+  });
+
+  const cont = document.getElementById('progress-agent');
+  cont.innerHTML='';
+  localAgents.forEach((a,i)=>{
+    const aMs = ms.filter(m=>m.agent===a);
+    const p   = pct(aMs.filter(m=>m.presence===1).length, aMs.length);
+    cont.innerHTML += `
+      <div class="progress-item">
+        <div class="progress-label">
+          <span>${a}</span>
+          <span style="font-family:'JetBrains Mono',monospace;color:var(--muted);">${aMs.length} ménages · ${p}% présents</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width:${p}%;background:${colorOf(i)};"></div></div>
+      </div>`;
+  });
+  if(!localAgents.length) cont.innerHTML = `<div style="color:var(--muted);font-size:12px">Aucun ménage pour cette sélection.</div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PAGE : PAR AGENT
+// ══════════════════════════════════════════════════════════════════
+let agentCharts = {};
+
+function renderAgentSection(f){
+  const placeholder = document.getElementById('agent-placeholder');
+  const results = document.getElementById('agent-results');
+  const summary = document.getElementById('agent-summary');
+  if(!f || f.none){ placeholder.style.display='block'; results.style.display='none'; summary.style.display='none'; return; }
+  placeholder.style.display='none';
+
+  // Base / commune : tableau récapitulatif des agents (pas de détail individuel).
+  if(!f.fkt){
+    results.style.display='none';
+    summary.style.display='block';
+    renderAgentSummary(f);
+    return;
+  }
+  // Fokontany : détail individuel (onglets + graphiques par agent).
+  summary.style.display='none';
+  results.style.display='block';
+
+  const segs = segsForFilter(f);
+  const localAgents = [...new Set(segs.map(s=>s.agent).filter(Boolean))].sort();
+
+  const tabs = document.getElementById('agent-tabs');
+  tabs.innerHTML='';
+  localAgents.forEach((a,i)=>{
+    const btn = document.createElement('button');
+    btn.className = 'ar-tab'+(i===0?' active':'');
+    btn.textContent = a;
+    btn.onclick = ()=>{
+      document.querySelectorAll('#agent-tabs .ar-tab').forEach(t=>t.classList.remove('active'));
+      btn.classList.add('active');
+      renderAgentPage(a, f);
+    };
+    tabs.appendChild(btn);
+  });
+
+  if(localAgents.length) renderAgentPage(localAgents[0], f);
+  else document.getElementById('agent-content').innerHTML = `<div style="color:var(--muted);font-size:12px;padding:20px">Aucun agent pour cette sélection.</div>`;
+}
+
+function renderAgentSummary(f){
+  const ms   = dataForFilter(f);
+  const segs = segsForFilter(f);
+  const agents = [...new Set(ms.map(m=>m.agent).filter(Boolean))].sort();
+
+  document.getElementById('agent-summary-scope').textContent = scopeLabel(f);
+  document.getElementById('agent-summary-tbody').innerHTML = agents.length
+    ? agents.map(a=>{
+        const am  = ms.filter(m=>m.agent===a);
+        const asg = segs.filter(s=>s.agent===a);
+        const pres= am.filter(m=>m.presence===1).length;
+        const carn= am.filter(hasCarnet).length;
+        const tps = avg(asg.filter(s=>s.tps>0).map(s=>s.tps));
+        return `<tr>
+          <td><strong>${a}</strong></td>
+          <td style="font-family:'JetBrains Mono',monospace">${am.length}</td>
+          <td style="font-family:'JetBrains Mono',monospace">${asg.length}</td>
+          <td>${pct(pres,am.length)}%</td>
+          <td>${pct(carn,am.length)}%</td>
+          <td style="font-family:'JetBrains Mono',monospace">${tps||'—'}</td>
+        </tr>`;
+      }).join('')
+    : `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Aucun agent pour cette sélection.</td></tr>`;
+
+  document.getElementById('agent-summary-count').textContent =
+    `${agents.length} agent(s) · choisissez un fokontany pour le détail individuel de chaque agent`;
+}
+
+function renderAgentPage(a, f){
+  const ms   = dataForFilter(f).filter(m=>m.agent===a);
+  const segs = segsForFilter(f).filter(s=>s.agent===a);
+  const total= ms.length;
+  const pres = ms.filter(m=>m.presence===1).length;
+  const carn = ms.filter(hasCarnet).length;
+  const tps  = avg(segs.filter(s=>s.tps>0).map(s=>s.tps));
+  const aDates = [...new Set(ms.map(m=>m.date))].sort();
+
+  const cont = document.getElementById('agent-content');
+  cont.innerHTML = `
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+      <div class="kpi-card blue"><div class="kpi-label">Ménages</div><div class="kpi-value">${total}</div></div>
+      <div class="kpi-card green"><div class="kpi-label">Présents</div><div class="kpi-value">${pres}</div><div class="kpi-sub">${pct(pres,total)}%</div></div>
+      <div class="kpi-card yellow"><div class="kpi-label">Avec carnet</div><div class="kpi-value">${carn}</div><div class="kpi-sub">${pct(carn,total)}%</div></div>
+      <div class="kpi-card blue"><div class="kpi-label">Tps moyen</div><div class="kpi-value">${tps}</div><div class="kpi-sub">minutes / segment</div></div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Ménages par date</div><div class="chart-sub">${a}</div></div></div>
+        <div class="chart-wrap"><canvas id="agent-chart-date"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Temps moyen par segment</div><div class="chart-sub">en minutes</div></div></div>
+        <div class="chart-wrap"><canvas id="agent-chart-tps"></canvas></div>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-toolbar"><div class="table-title">Segments traités par ${a}</div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Fokontany</th><th>Segment</th><th>Ménages</th><th>% Présents</th><th>% Carnet</th><th>Tps (min)</th><th>Statut</th></tr></thead>
+          <tbody>${segs.map(s=>`<tr>
+            <td>${s.fkt||s.fktcode||'—'}</td>
+            <td>${s.seg}</td>
+            <td style="font-family:'JetBrains Mono',monospace">${s.n}</td>
+            <td>${pct(s.nPresent,s.n)}%</td>
+            <td>${pct(s.nCarnet,s.n)}%</td>
+            <td style="font-family:'JetBrains Mono',monospace">${s.tps||'—'}</td>
+            <td>${s.statut===120?'<span class="pill pill-acheve">Validé</span>':'<span class="pill pill-inacheve">Complété</span>'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  ['agent-chart-date','agent-chart-tps'].forEach(id=>{ if(agentCharts[id]) agentCharts[id].destroy(); });
+
+  agentCharts['agent-chart-date'] = new Chart(document.getElementById('agent-chart-date'),{
+    type:'bar',
+    data:{labels: aDates.map(d=>formatDate(d)),
+      datasets:[
+        {label:'Présents',  data:aDates.map(d=>ms.filter(m=>m.date===d&&m.presence===1).length), backgroundColor:'#10b981',borderRadius:5},
+        {label:'Absents',   data:aDates.map(d=>ms.filter(m=>m.date===d&&m.presence===2).length), backgroundColor:'#ef4444',borderRadius:5},
+      ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10}}},
+      scales:{x:{stacked:true},y:{stacked:true,beginAtZero:true}}}
+  });
+
+  agentCharts['agent-chart-tps'] = new Chart(document.getElementById('agent-chart-tps'),{
+    type:'line',
+    data:{labels: segs.map(s=>s.seg),
+      datasets:[{label:'Tps (min)', data:segs.map(s=>s.tps||null),
+        borderColor:'#2563eb',backgroundColor:'#2563eb15',fill:true,tension:0.3,pointRadius:4}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{y:{beginAtZero:true}}}
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  TABLE PAR ZONE / SEGMENT  (vue d'ensemble, pas de drill-down)
+// ══════════════════════════════════════════════════════════════════
+function renderZoneTable(){
+  const q = (document.getElementById('zone-search').value||'').toLowerCase();
+  const rows = SEGMENTS.filter(s=> !q || (s.fkt||'').toLowerCase().includes(q) || (s.fktcode||'').toLowerCase().includes(q) || (s.seg||'').toLowerCase().includes(q) || (s.agent||'').toLowerCase().includes(q) || (s.commune||'').toLowerCase().includes(q));
+  document.getElementById('zone-tbody').innerHTML = rows.map(s=>`<tr>
+    <td>${s.commune||'—'}</td>
+    <td>${s.fkt||s.fktcode||'—'}</td>
+    <td>${s.seg||'—'}</td>
+    <td>${s.agent||'—'}</td>
+    <td style="font-family:'JetBrains Mono',monospace">${s.n}</td>
+    <td style="font-family:'JetBrains Mono',monospace">${s.bats.size}</td>
+    <td>${pct(s.nPresent,s.n)}%</td>
+    <td>${pct(s.nCarnet,s.n)}%</td>
+    <td style="font-family:'JetBrains Mono',monospace">${s.tps||'—'}</td>
+  </tr>`).join('');
+  document.getElementById('zone-count').textContent = `${rows.length} / ${SEGMENTS.length} segments`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  CARTE GPS (un point par ménage géolocalisé, coloré par agent)
+// ══════════════════════════════════════════════════════════════════
+let map, layers={}, allMarkers=[];
+
+function renderGpsSection(f){
+  const placeholder = document.getElementById('gps-placeholder');
+  const results = document.getElementById('gps-results');
+  if(!f || f.none){ placeholder.style.display='block'; results.style.display='none'; return; }
+  placeholder.style.display='none'; results.style.display='block';
+
+  const ms = dataForFilter(f).filter(m=>m.lat && Math.abs(m.lat)<90 && m.lon && Math.abs(m.lon)<180);
+
+  if(map){ map.remove(); map=null; }
+  layers = {}; allMarkers = [];
+  document.getElementById('map-filters').innerHTML = '';
+
+  map = L.map('map',{preferCanvas:true, maxZoom:21}).setView([-18.9,47.5],12);
+
+  // Fonds satellite.
+  // maxNativeZoom = dernier niveau où la source possède réellement des tuiles ;
+  // au-delà, Leaflet agrandit la dernière tuile disponible (image plus douce mais
+  // continue) au lieu d'afficher des cases grises.
+  // Mesuré sur le Menabe : Esri s'arrête à z17, Bing et Google vont à z19.
+  const BingLayer = L.TileLayer.extend({
+    getTileUrl: function(c){
+      let q = '';
+      for(let i=c.z; i>0; i--){
+        let d = 0, m = 1 << (i-1);
+        if(c.x & m) d += 1;
+        if(c.y & m) d += 2;
+        q += d;
+      }
+      return 'https://ecn.t'+(Math.abs(c.x)%4)+'.tiles.virtualearth.net/tiles/a'+q+'.jpeg?g=1';
+    }
+  });
+
+  const bases = {
+    'Bing Aérien (le plus net)': new BingLayer('',{
+      maxZoom:21, maxNativeZoom:19, attribution:'Imagerie © Microsoft / Maxar'
+    }),
+    'Google Satellite': L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{
+      subdomains:['0','1','2','3'], maxZoom:21, maxNativeZoom:19, attribution:'Imagerie © Google'
+    }),
+    'Google Hybride (routes)': L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',{
+      subdomains:['0','1','2','3'], maxZoom:21, maxNativeZoom:19, attribution:'Imagerie © Google'
+    }),
+    'Esri World Imagery': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+      maxZoom:21, maxNativeZoom:17, attribution:'Tiles © Esri'
+    })
+  };
+  bases['Bing Aérien (le plus net)'].addTo(map);
+
+  const labelsLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png',{
+    maxZoom:21, maxNativeZoom:20, opacity:0.8
+  }).addTo(map);
+
+  L.control.scale({imperial:false}).addTo(map);
+
+  // Deux modes de couleur/filtrage selon le niveau :
+  //  • Fokontany : couleur = AGENT + filtre agent (sélecteur de calques) + filtre date.
+  //  • Commune / base : couleur = DATE + filtre date seulement (pas de filtre agent).
+  const isFkt = !!f.fkt;
+  const localDates  = [...new Set(ms.map(m=>m.date).filter(isValidDate))].sort();
+  const localAgents = [...new Set(ms.map(m=>m.agent).filter(Boolean))].sort();
+  const GREY = '#94a3b8';               // marqueurs sans clé (sans agent / sans date)
+  const overlays = {};
+  const colMap = {};
+
+  // Clé de regroupement/coloration + liste des groupes (un calque par clé).
+  const keyOf = isFkt ? (m=> m.agent||'') : (m=> isValidDate(m.date) ? m.date : '');
+  let groupKeys;
+  if(isFkt){
+    localAgents.forEach((a,i)=>colMap[a]=colorOf(i));
+    groupKeys = localAgents.slice();
+    if(ms.some(m=>!m.agent)) groupKeys.push('');
+  } else {
+    localDates.forEach((d,i)=>colMap[d]=colorOf(i));
+    groupKeys = localDates.slice();
+    if(ms.some(m=>!isValidDate(m.date))) groupKeys.push('');
+  }
+
+  groupKeys.forEach(k=>{
+    const group = L.layerGroup();
+    ms.filter(m=>keyOf(m)===k).forEach(m=>{
+      const marker = L.circleMarker([m.lat,m.lon],{
+        radius:5, weight:1.5, color:'#ffffff', fillColor:(k===''?GREY:colMap[k]), fillOpacity:0.9
+      }).bindPopup(`<div style="font-family:'Bricolage Grotesque',sans-serif;min-width:170px">
+          <div style="font-size:11px;color:#64748b">Code de dénombrement</div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px;font-family:'JetBrains Mono',monospace">${m.id||'—'}</div>
+          <div style="font-size:11px;color:#64748b">Chef de ménage</div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px">${m.nom||'—'}</div>
+          <div style="font-size:11px;color:#64748b">Date de l'interview</div>
+          <div style="font-weight:600;font-size:12px;margin-bottom:6px">${formatDate(m.date)}</div>
+          <div style="font-size:11px;color:#64748b">Code agent</div>
+          <div style="font-weight:600;font-size:12px;margin-bottom:6px">${m.agent||'—'}</div>
+          <div style="font-size:11px;color:#64748b">Adresse</div>
+          <div style="font-weight:600;font-size:12px">${m.adresse||'—'}</div>
+        </div>`);
+      marker._grp = group;      // groupe d'appartenance (agent OU date selon le niveau)
+      marker._date = m.date;    // date du ménage, pour le filtre date
+      group.addLayer(marker);
+      allMarkers.push(marker);
+    });
+    group.addTo(map);
+    layers[k] = group;
+    // Filtre agent (cases du sélecteur de calques) : uniquement au niveau fokontany.
+    if(isFkt) overlays[ k==='' ? '(sans agent)' : k ] = group;
+  });
+
+  // Limite (contour) rouge, hiérarchique selon le niveau :
+  //  • fokontany  -> LIMITES[num_fkt]
+  //  • commune    -> LIMITES_COMMUNE[code_commune]
+  //  • base       -> LIMITES_DISTRICT[code_district] pour chaque district affiché
+  // (CSV dans LimitesFokontany/...). Absente => pas de tracé, sans erreur.
+  const LIM_STYLE = {color:'#ff2d2d', weight:3, opacity:0.9, fill:false, interactive:false};
+  let limiteLayer = null;
+  if(typeof LIMITES!=='undefined' && f.fkt && LIMITES[f.fkt]){
+    limiteLayer = L.polygon(LIMITES[f.fkt], LIM_STYLE).addTo(map);
+  } else if(typeof LIMITES_COMMUNE!=='undefined' && f.commune && !f.fkt){
+    const code = communeCodeMap.get(f.commune);
+    if(code && LIMITES_COMMUNE[code]){
+      limiteLayer = L.polygon(LIMITES_COMMUNE[code], LIM_STYLE).addTo(map);
+    }
+  } else if(typeof LIMITES_DISTRICT!=='undefined' && !f.commune && !f.fkt){
+    // District(s) à tracer : ceux des ménages ; si aucun ménage (district sans
+    // données), on retombe sur tous les districts fournis dans LIMITES_DISTRICT
+    // (le district choisi, injecté via codes_geo) pour afficher quand même sa limite.
+    let dcodes = [...new Set(ms.map(m=>fktKeyOf(m).slice(0,4)).filter(Boolean))];
+    if(!dcodes.length) dcodes = Object.keys(LIMITES_DISTRICT);
+    const polys = [];
+    dcodes.forEach(dc=>{ if(LIMITES_DISTRICT[dc]) polys.push(L.polygon(LIMITES_DISTRICT[dc], LIM_STYLE)); });
+    if(polys.length) limiteLayer = L.featureGroup(polys).addTo(map);
+  }
+
+  // Sous-limites en BLEU (web MPA) : les ENFANTS du périmètre courant, EN PLUS de
+  // la limite rouge du niveau courant. District -> limites des communes ;
+  // commune -> limites des fokontany. Fokontany -> pas d'enfant (rien). Gardé par
+  // `typeof SCOPE` -> inerte côté exe (navigation SPA, SCOPE non défini).
+  const SUB_STYLE = {color:'#2563ff', weight:2, opacity:0.85, fill:false, interactive:false};
+  let subLayer = null;
+  if(typeof SCOPE!=='undefined' && SCOPE){
+    const subPolys = [];
+    if(SCOPE.level==='district' && typeof LIMITES_COMMUNE!=='undefined'){
+      Object.keys(LIMITES_COMMUNE).forEach(cc=>{
+        if(LIMITES_COMMUNE[cc]) subPolys.push(L.polygon(LIMITES_COMMUNE[cc], SUB_STYLE)); });
+    } else if(SCOPE.level==='commune' && typeof LIMITES!=='undefined'){
+      Object.keys(LIMITES).forEach(fk=>{
+        if(LIMITES[fk]) subPolys.push(L.polygon(LIMITES[fk], SUB_STYLE)); });
+    }
+    if(subPolys.length) subLayer = L.featureGroup(subPolys).addTo(map);
+  }
+
+  const boundsGroup = allMarkers.slice();
+  if(limiteLayer) boundsGroup.push(limiteLayer);
+  if(subLayer) boundsGroup.push(subLayer);
+  // Filet de sécurité : si rien à cadrer (ni ménage, ni contour district), on
+  // cadre sur tous les contours de fokontany disponibles (LIMITES), pour que la
+  // carte se cale sur la zone choisie plutôt que sur la vue par défaut.
+  if(!boundsGroup.length && typeof LIMITES!=='undefined'){
+    Object.keys(LIMITES).forEach(k=>{ if(LIMITES[k]) boundsGroup.push(L.polygon(LIMITES[k], LIM_STYLE)); });
+  }
+  if(boundsGroup.length){ const fg=L.featureGroup(boundsGroup); map.fitBounds(fg.getBounds().pad(0.15)); }
+
+  overlays['Noms de lieux'] = labelsLayer;
+  if(subLayer){
+    overlays[SCOPE.level==='district' ? 'Limites des communes'
+                                      : 'Limites des fokontany'] = subLayer;
+  }
+  if(limiteLayer){
+    overlays['Limite'] = limiteLayer;
+    if(limiteLayer.bringToFront) limiteLayer.bringToFront();   // rouge au-dessus du bleu
+  }
+  L.control.layers(bases, overlays, {collapsed:false}).addTo(map);
+
+  // Note contextuelle selon le niveau.
+  const note = document.getElementById('gps-note');
+  if(note){
+    const contour = isFkt ? "du fokontany" : (f.commune ? "de la commune" : "du district");
+    // Mention des sous-limites bleues (web MPA) selon le niveau.
+    let bleu = "";
+    if(subLayer){
+      bleu = (typeof SCOPE!=='undefined' && SCOPE.level==='district')
+        ? ` Les <strong>contours bleus</strong> sont les limites des communes.`
+        : ` Les <strong>contours bleus</strong> sont les limites des fokontany.`;
+    }
+    note.innerHTML = isFkt
+      ? `Chaque point représente un ménage géolocalisé. La <strong>couleur du point correspond à l'agent recenseur</strong>. Filtres disponibles : <strong>par agent</strong> (cases du sélecteur de calques, en haut à droite) et <strong>par date</strong> (boutons ci-dessous). Le contour rouge est la limite ${contour}.${bleu} Cliquez sur un point pour voir son détail.`
+      : `Chaque point représente un ménage géolocalisé. La <strong>couleur du point correspond à la date</strong> de l'interview. Filtrez par date avec les boutons ci-dessous. Le contour rouge est la limite ${contour}.${bleu} Cliquez sur un point pour voir son détail.`;
+  }
+
+  // Filtre par DATE : un bouton par date. Le clic affiche/masque les marqueurs de
+  // cette date au sein de leur groupe (agent ou date) — se compose avec le filtre
+  // agent au niveau fokontany. En mode couleur=date, le bouton porte sa pastille.
+  const filtersDiv = document.getElementById('map-filters');
+  localDates.forEach(d=>{
+    const btn = document.createElement('button');
+    btn.className = 'ar-tab active';
+    btn.innerHTML = isFkt
+      ? formatDate(d)
+      : `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${colMap[d]};margin-right:5px;vertical-align:middle"></span>${formatDate(d)}`;
+    btn.onclick = ()=>{
+      btn.classList.toggle('active');
+      const visible = btn.classList.contains('active');
+      allMarkers.forEach(mk=>{
+        if(mk._date!==d) return;
+        visible ? mk._grp.addLayer(mk) : mk._grp.removeLayer(mk);
+      });
+    };
+    filtersDiv.appendChild(btn);
+  });
+
+  setTimeout(()=>{ if(map) map.invalidateSize(); },200);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  QUALITÉ DES DONNÉES  (vue d'ensemble)
+// ══════════════════════════════════════════════════════════════════
+function initQualite(){
+  mkChart('qual-carnet',{type:'doughnut',
+    data:{labels:[1,2,3,4].map(c=>CARNET_LABEL[c]),
+      datasets:[{data:[1,2,3,4].map(c=>MENAGES.filter(m=>m.carnet===c).length),backgroundColor:[1,2,3,4].map(c=>CARNET_COLOR[c]),borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{boxWidth:10}}}}});
+
+  mkChart('qual-presence',{type:'doughnut',
+    data:{labels:['Présent','Absent'],datasets:[{data:[MENAGES.filter(m=>m.presence===1).length,MENAGES.filter(m=>m.presence===2).length],backgroundColor:['#10b981','#ef4444'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom'}}}});
+
+  mkChart('qual-elec',{type:'doughnut',
+    data:{labels:['Oui','Non'],datasets:[{data:[MENAGES.filter(m=>m.elec===1).length,MENAGES.filter(m=>m.elec===2).length],backgroundColor:['#f59e0b','#64748b'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom'}}}});
+
+  const tailles = MENAGES.map(m=>m.taille).filter(t=>t>0);
+  const maxT = Math.min(Math.max(...tailles,0),15);
+  const bins = Array.from({length:maxT},(_, i)=>i+1);
+  mkChart('qual-taille',{type:'bar',
+    data:{labels:bins.map(b=>b===maxT?`${b}+`:String(b)),
+      datasets:[{label:'Ménages', data:bins.map(b=> b===maxT ? tailles.filter(t=>t>=b).length : tailles.filter(t=>t===b).length), backgroundColor:'#2563eb',borderRadius:5}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
+
+  mkChart('qual-statut',{type:'doughnut',
+    data:{labels:['Validé par superviseur','Complété (en attente)'],
+      datasets:[{data:[SEGMENTS.filter(s=>s.statut===120).length,SEGMENTS.filter(s=>s.statut!==120).length],backgroundColor:['#10b981','#f59e0b'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom'}}}});
+
+  const nbGps = MENAGES.filter(m=>m.lat && Math.abs(m.lat)<90).length;
+  mkChart('qual-gps',{type:'doughnut',
+    data:{labels:['Avec GPS','Sans GPS'],datasets:[{data:[nbGps,TOTAL-nbGps],backgroundColor:['#2563eb','#e2e8f0'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom'}}}});
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  HISTORIQUE / ÉVOLUTION  (vue d'ensemble)
+// ══════════════════════════════════════════════════════════════════
+function initHistorique(){
+  document.getElementById('hist-kpis').innerHTML = `
+    <div class="kpi-card blue"><div class="kpi-label">Jours de collecte</div><div class="kpi-value">${dateList.length}</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Première date</div><div class="kpi-value" style="font-size:16px">${formatDate(dateList[0])}</div></div>
+    <div class="kpi-card blue"><div class="kpi-label">Dernière date</div><div class="kpi-value" style="font-size:16px">${formatDate(dateList[dateList.length-1])}</div></div>
+    <div class="kpi-card green"><div class="kpi-label">Moy. ménages / jour</div><div class="kpi-value">${avg(dateList.map(d=>MENAGES.filter(m=>m.date===d).length))}</div></div>`;
+
+  mkChart('hist-line',{type:'line',
+    data:{labels: dateList.map(d=>formatDate(d)),
+      datasets:[{label:'Ménages dénombrés', data:dateList.map(d=>MENAGES.filter(m=>m.date===d).length),
+        borderColor:'#2563eb',backgroundColor:'#2563eb20',fill:true,tension:0.4,pointRadius:5,pointBackgroundColor:'#2563eb'}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+
+  document.getElementById('hist-tbody').innerHTML = dateList.map(d=>{
+    const ms = MENAGES.filter(m=>m.date===d);
+    const segs = new Set(ms.map(m=>m.sid)).size;
+    const agents = new Set(ms.map(m=>m.agent)).size;
+    const t = avg(SEGMENTS.filter(s=>ms.some(m=>m.sid===s.sid) && s.tps>0).map(s=>s.tps));
+    return `<tr>
+      <td style="font-family:'JetBrains Mono',monospace">${formatDate(d)}</td>
+      <td style="font-family:'JetBrains Mono',monospace">${ms.length}</td>
+      <td style="font-family:'JetBrains Mono',monospace">${segs}</td>
+      <td style="font-family:'JetBrains Mono',monospace">${agents}</td>
+      <td style="font-family:'JetBrains Mono',monospace">${t||'—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  SEGMENTS MULTIPLES  (drill-down Commune -> Fokontany)
+//  Un segment est "multiple" quand le même code de segment se répète
+//  plus d'une fois dans le fokontany d'après DEN_MENAGE.
+//  On compte donc les lignes de SEGMENTS_DEN (1 ligne = 1 segment
+//  dénombré) et non les segments reconstruits depuis les ménages :
+//  un segment sans aucune ligne dans segment_roster doit être compté.
+// ══════════════════════════════════════════════════════════════════
+const SEG_DEN = (typeof SEGMENTS_DEN !== 'undefined') ? SEGMENTS_DEN : [];
+
+function renderMultiSection(f){
+  const placeholder = document.getElementById('multi-placeholder');
+  const results     = document.getElementById('multi-results');
+
+  // Niveau courant : périmètre imposé par le SERVEUR (SCOPE, dashboard web) sinon
+  // dérivé du filtre (mode SPA/exe : résultats au fokontany uniquement).
+  const hasScope = (typeof SCOPE !== 'undefined');
+  let level;
+  if(hasScope)               level = SCOPE.level || 'district';
+  else if(f && f.fkt)        level = 'fokontany';
+  else if(f && f.commune)    level = 'commune';
+  else                       level = 'none';
+
+  if(level==='none' || (f && f.none)){
+    placeholder.style.display='block'; results.style.display='none';
+    return;
+  }
+  placeholder.style.display='none'; results.style.display='block';
+
+  // SEGMENTS_DEN est déjà borné au périmètre côté serveur (web). En SPA (exe), on
+  // filtre selon le fokontany/commune sélectionné.
+  let lignes = SEG_DEN;
+  if(!hasScope){
+    if(f && f.fkt)          lignes = SEG_DEN.filter(s=> s.fktcode===f.fkt);
+    else if(f && f.commune) lignes = SEG_DEN.filter(s=> s.commune===f.commune);
+  }
+
+  // Détection PAR FOKONTANY : un code de segment (S01, S02…) n'est unique qu'AU SEIN
+  // d'un fokontany. Clé = (fokontany, code) -> on ne mélange pas les S01 de fokontany
+  // différents quand on agrège en commune/district.
+  const groups = new Map();
+  lignes.forEach(s=>{
+    const fk   = (s.fktcode && String(s.fktcode).trim()) ? String(s.fktcode).trim() : '(fkt manquant)';
+    const code = (s.seg && String(s.seg).trim()) ? String(s.seg).trim() : '(code manquant)';
+    const key  = fk+''+code;
+    if(!groups.has(key)) groups.set(key, {fk, code, n:0, agents:new Set()});
+    const g = groups.get(key); g.n++; if(s.agent) g.agents.add(s.agent);
+  });
+  const mult = [...groups.values()].filter(g=>g.n>1);
+
+  const thead = document.getElementById('multi-thead');
+  const title = document.getElementById('multi-title');
+  const tbody = document.getElementById('multi-tbody');
+
+  if(level==='fokontany'){
+    if(title) title.textContent = '🔢 Segments multiples du fokontany';
+    if(thead) thead.innerHTML = '<tr><th>Segment</th><th>Nombre</th><th>Agents concernés</th></tr>';
+    const rows = mult.sort((a,b)=> b.n-a.n || a.code.localeCompare(b.code,'fr'));
+    tbody.innerHTML = rows.length
+      ? rows.map(g=>`<tr>
+          <td><strong style="font-family:'JetBrains Mono',monospace">${g.code}</strong></td>
+          <td><span class="kpi-badge badge-down" style="font-family:'JetBrains Mono',monospace">${g.n}</span></td>
+          <td style="font-size:11px">${[...g.agents].sort().join(', ')||'—'}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:30px">✅ Aucun segment multiple dans ce fokontany</td></tr>`;
+    const nbCodes = new Set(lignes.map(s=> (s.seg&&String(s.seg).trim())?String(s.seg).trim():'(code manquant)')).size;
+    document.getElementById('multi-count').textContent =
+      `${rows.length} segment(s) multiple(s) sur ${nbCodes} code(s) distinct(s) · ${lignes.length} segment(s) dénombré(s) dans ce fokontany (DEN_MENAGE)`;
+  } else {
+    // Commune / District : AGRÉGATION par fokontany (1 ligne par (fokontany, segment)).
+    const fktLabel = new Map();
+    (typeof NAV_TREE!=='undefined' ? NAV_TREE : []).forEach(z=> fktLabel.set(z.fkt, z.label));
+    if(title) title.textContent = (level==='commune')
+      ? '🔢 Segments multiples de la commune' : '🔢 Segments multiples du district';
+    if(thead) thead.innerHTML = '<tr><th>Fokontany</th><th>Segment</th><th>Nombre</th><th>Agents concernés</th></tr>';
+    const rows = mult.sort((a,b)=>
+      (fktLabel.get(a.fk)||a.fk).localeCompare(fktLabel.get(b.fk)||b.fk,'fr')
+      || b.n-a.n || a.code.localeCompare(b.code,'fr'));
+    tbody.innerHTML = rows.length
+      ? rows.map(g=>`<tr>
+          <td style="font-size:11px">${fktLabel.get(g.fk)||g.fk}</td>
+          <td><strong style="font-family:'JetBrains Mono',monospace">${g.code}</strong></td>
+          <td><span class="kpi-badge badge-down" style="font-family:'JetBrains Mono',monospace">${g.n}</span></td>
+          <td style="font-size:11px">${[...g.agents].sort().join(', ')||'—'}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px">✅ Aucun segment multiple dans ce périmètre</td></tr>`;
+    const nbFkt = new Set(mult.map(g=>g.fk)).size;
+    const portee = (level==='commune') ? 'cette commune' : 'ce district';
+    document.getElementById('multi-count').textContent =
+      `${rows.length} segment(s) multiple(s) dans ${nbFkt} fokontany · ${lignes.length} segment(s) dénombré(s) dans ${portee} (DEN_MENAGE)`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  TAUX DE CAPTURE GPS  (drill-down Commune -> Fokontany)
+//  GPS "capturé" = latitude ET longitude sont des nombres valides.
+//  Taux de non-capture = ménages sans GPS / total des ménages du fokontany.
+// ══════════════════════════════════════════════════════════════════
+function hasGps(m){ return typeof m.lat==='number' && isFinite(m.lat) && typeof m.lon==='number' && isFinite(m.lon); }
+
+function renderGpsCaptureSection(f){
+  const placeholder = document.getElementById('gpscap-placeholder');
+  const results     = document.getElementById('gpscap-results');
+  placeholder.style.display='none'; results.style.display='block';
+
+  // Trois niveaux : base entière (aucune sélection), commune, fokontany.
+  let data, scope;
+  if(f && f.fkt){
+    data = dataForFilter(f);
+    let nm = f.fkt;
+    const cm = fktByCommune.get(f.commune);
+    if(cm && cm.get(f.fkt)) nm = cm.get(f.fkt);
+    scope = 'Fokontany : ' + nm;
+  } else if(f && f.commune){
+    data = dataForFilter({commune:f.commune});
+    scope = 'Commune : ' + f.commune;
+  } else {
+    data = MENAGES;
+    scope = 'Ensemble de la base de données';
+  }
+
+  const total = data.length;
+  const ok    = data.filter(hasGps).length;
+  const ko    = total - ok;
+
+  document.getElementById('gpscap-scope').textContent  = scope;
+  document.getElementById('gpscap-total').textContent  = total;
+  document.getElementById('gpscap-ok').textContent     = ok;
+  document.getElementById('gpscap-ko').textContent     = ko;
+  document.getElementById('gpscap-ok-pct').textContent = pct(ok,total)+'% capturés';
+  document.getElementById('gpscap-ko-pct').textContent = pct(ko,total)+'% non capturés';
+  document.getElementById('gpscap-rate').textContent   = pct(ko,total)+'%';
+
+  mkChart('gpscap-donut',{
+    type:'doughnut',
+    data:{labels:['GPS capturés','GPS non capturés'],
+      datasets:[{data:[ok,ko],backgroundColor:['#10b981','#ef4444'],borderWidth:0,hoverOffset:6}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'68%',
+      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:14}}}}
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  EXPORT CSV (liste complète des ménages)
+// ══════════════════════════════════════════════════════════════════
+function exportCSV(){
+  const headers = ['Code den.','Chef de ménage','Agent','Commune','Fokontany','Segment','Date','Carnet','Présence','Tps segment (min)','Latitude','Longitude','Adresse'];
+  const rows = MENAGES.map(m=>[m.id,m.nom,m.agent,communeOf(m),fktDisplay(m),m.seg,m.date,CARNET_LABEL[m.carnet]||'',PRESENCE_LABEL[m.presence]||'',m.tps,m.lat,m.lon,m.adresse]);
+  const csv = [headers,...rows].map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join(String.fromCharCode(10));
+  const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `RSU2026_menages_${META.date_rapport||''}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  DÉMARRAGE
+// ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+//  MODE DASHBOARD MULTI-PAGES (web)
+//  Activé uniquement quand le serveur injecte ACTIVE_SECTION / SCOPE /
+//  NAV_TREE / NAV_BASE (voir rapport_core.generer_rapport). L'exe n'injecte
+//  rien -> le bloc SPA d'origine (else, plus bas) s'exécute inchangé.
+// ══════════════════════════════════════════════════════════════════
+function mpaFilter(){
+  // La donnée chargée EST déjà le périmètre (filtrée côté serveur). On dérive le
+  // filtre depuis la donnée pour que les fonctions de rendu existantes se
+  // comportent comme en SPA, sans re-filtrer réellement. Le label vient du serveur.
+  const f = { label: SCOPE.label || '' };
+  // Le périmètre vient du SERVEUR (SCOPE), PAS des ménages : un fokontany avec des
+  // segments dénombrés mais AUCUN ménage roster (MENAGES vide, fréquent en cours de
+  // dénombrement) doit quand même filtrer correctement — sinon « Segments multiples »
+  // (qui lit SEGMENTS_DEN) ne détecte plus rien. Repli sur les ménages si SCOPE muet.
+  if(SCOPE.level==='fokontany'){
+    f.isFkt = true;
+    f.fkt = SCOPE.code || (MENAGES.length ? fktKeyOf(MENAGES[0]) : '');
+    f.commune = SCOPE.commune || (MENAGES.length ? communeOf(MENAGES[0]) : '');
+  } else if(SCOPE.level==='commune'){
+    f.commune = SCOPE.commune || (MENAGES.length ? communeOf(MENAGES[0]) : '');
+  }
+  return f;
+}
+function buildMpaDrill(){
+  // Sous-menu Commune->Fokontany (liens) depuis le référentiel complet du
+  // district (NAV_TREE), pour la section active. Conserve la section en changeant
+  // de zone. On masque/vide les autres sous-menus.
+  document.querySelectorAll('.nav-sub').forEach(el=>{ el.style.display='none'; el.innerHTML=''; });
+  const cont = document.getElementById(ACTIVE_SECTION+'-drill');
+  if(!cont) return;
+  const byCom = new Map();
+  NAV_TREE.forEach(z=>{
+    if(!byCom.has(z.ccode)) byCom.set(z.ccode, {nom:z.commune, fkts:[]});
+    byCom.get(z.ccode).fkts.push(z);
+  });
+  let html='';
+  byCom.forEach((c,ccode)=>{
+    const isActiveCom = (SCOPE.level==='commune'   && SCOPE.code===ccode) ||
+                        (SCOPE.level==='fokontany' && SCOPE.ccode===ccode);
+    const selComm     = (SCOPE.level==='commune'   && SCOPE.code===ccode);
+    html += `<a class="nav-sub-item commune${isActiveCom?' expanded':''}${selComm?' active':''}" href="${NAV_BASE}/${ACTIVE_SECTION}/commune/${encodeURIComponent(ccode)}">${c.nom}</a>`;
+    if(isActiveCom){
+      html += `<div class="nav-sub2">`;
+      c.fkts.forEach(z=>{
+        const selFkt = (SCOPE.level==='fokontany' && SCOPE.code===z.fkt);
+        html += `<a class="nav-sub-item fkt${selFkt?' active':''}" href="${NAV_BASE}/${ACTIVE_SECTION}/fokontany/${encodeURIComponent(z.fkt)}">${z.label}</a>`;
+      });
+      html += `</div>`;
+    }
+  });
+  cont.innerHTML = html;
+  cont.style.display = 'block';
+}
+function renderActiveSection(){
+  const f = mpaFilter();
+  switch(ACTIVE_SECTION){
+    case 'general':    renderGeneral(f); break;
+    case 'agent':      renderAgentSection(f); break;
+    case 'gps':        renderGpsSection(f); break;
+    case 'gpscap':     renderGpsCaptureSection(f); break;
+    case 'multi':      renderMultiSection(f); break;   // agrège district/commune/fokontany
+    case 'zone':       renderZoneTable(); break;
+    case 'qualite':    initQualite(); break;
+    case 'historique': initHistorique(); break;
+  }
+}
+function initMPA(){
+  initHeader();
+  // Web : on retire les actions « CSV » / « Imprimer » (client) de la barre du haut.
+  // L'exe (hors initMPA) garde ses boutons d'origine.
+  var _actions = document.querySelector('.topbar-actions');
+  if(_actions){ _actions.remove(); }
+  // « Exporter rapport » -> bouton FLOTTANT en bas à droite (le coin haut-droite est
+  // occupé en permanence par le bandeau utilisateur fixe, qui masquerait le lien).
+  // Télécharge le classeur Excel généré côté serveur (couverture + qualité par
+  // commune/fokontany + dénombrement par agent-jour).
+  if(!document.getElementById('rsu-export-fab')){
+    var _exp = NAV_BASE.replace(/\/vue$/, '/export/rapport.xlsx');
+    var _fab = document.createElement('a');
+    _fab.id = 'rsu-export-fab';
+    _fab.href = _exp;
+    _fab.textContent = '⬇ Exporter rapport';
+    _fab.title = 'Télécharger le rapport du district (Excel)';
+    _fab.style.cssText = 'position:fixed;bottom:18px;right:18px;z-index:2147482000;'
+      + 'background:#2563eb;color:#fff;font:600 13px system-ui,"Segoe UI",Arial;'
+      + 'padding:11px 17px;border-radius:999px;text-decoration:none;'
+      + 'box-shadow:0 6px 18px rgba(13,43,78,.28)';
+    _fab.onmouseover = function(){ this.style.background = '#1d4ed8'; };
+    _fab.onmouseout  = function(){ this.style.background = '#2563eb'; };
+    document.body.appendChild(_fab);
+  }
+  // Chaque bouton de section -> vue du DISTRICT pour cette section (remise au
+  // niveau district). Descendre à une commune/fokontany se fait UNIQUEMENT via le
+  // sous-menu ci-dessous, qui conserve la section active. Cliquer la section active
+  // sert donc aussi de « retour au district ».
+  document.querySelectorAll('.nav-item').forEach(btn=>{
+    const m = (btn.getAttribute('onclick')||'').match(/page-(\w+)/);
+    if(!m) return;
+    const sec = m[1];
+    btn.removeAttribute('onclick');
+    btn.addEventListener('click', ()=>{ location.href = NAV_BASE+'/'+sec; });
+    btn.classList.toggle('active', sec===ACTIVE_SECTION);
+  });
+  // Titre = section + périmètre courant (district / commune / fokontany).
+  const titre = pageTitles['page-'+ACTIVE_SECTION] || '';
+  document.getElementById('page-title').textContent =
+    SCOPE.label ? (titre + ' — ' + SCOPE.label) : titre;
+  buildMpaDrill();
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  const pg = document.getElementById('page-'+ACTIVE_SECTION);
+  if(pg) pg.classList.add('active');
+  renderActiveSection();
+  if(ACTIVE_SECTION==='gps') setTimeout(()=>{
+    if(map){ map.invalidateSize();
+      if(allMarkers && allMarkers.length){ const fg=L.featureGroup(allMarkers); map.fitBounds(fg.getBounds().pad(0.15)); } }
+  },250);
+}
+
+window.addEventListener('DOMContentLoaded',()=>{
+  if(typeof ACTIVE_SECTION !== 'undefined'){ initMPA(); return; }
+  // ── Mode SPA d'origine (exe) : INCHANGÉ ──
+  initHeader();
+
+  renderDrill('general');
+  renderDrill('agent');
+  renderDrill('gps');
+  renderDrill('multi');
+  renderDrill('gpscap');
+  // seul le sous-menu de la page active (Vue générale) est visible au départ
+  document.getElementById('agent-drill').style.display='none';
+  document.getElementById('gps-drill').style.display='none';
+  document.getElementById('multi-drill').style.display='none';
+  document.getElementById('gpscap-drill').style.display='none';
+  // zone/qualite/historique : pas de sous-menu en mode SPA (exe) -> masques (ces
+  // conteneurs ne servent qu'au dashboard web multi-pages, cf. buildMpaDrill).
+  ['zone','qualite','historique'].forEach(p=>{
+    const el = document.getElementById(p+'-drill'); if(el) el.style.display='none';
+  });
+
+  renderGeneral({});              // Vue générale : ensemble de la base dès l'ouverture
+  renderAgentSection({});          // Par Agent : tableau récap de l'ensemble de la base
+  renderGpsSection({none:true});   // Carte : rendue à l'ouverture de la page (peut être lourde)
+  renderMultiSection({none:true});
+  renderGpsCaptureSection({none:true});
+
+  renderZoneTable();
+  initQualite();
+  initHistorique();
+});
+</script>
+</body>
+</html>

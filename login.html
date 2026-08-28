@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RSU 2026 — Connexion</title>
+<style>
+  :root{
+    --bleu:#1b6ef3; --bleu-fonce:#1558c9; --texte:#1c2430; --gris:#5a6675;
+    --bord:#dce3ea; --fond:#eef4fb; --erreur:#c0392b;
+  }
+  *{box-sizing:border-box}
+  body{
+    font-family:system-ui,"Segoe UI",Arial,sans-serif; color:var(--texte);
+    margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(135deg,#eaf1fb 0%,#dce8f9 100%); padding:20px; line-height:1.5;
+  }
+  .carte{
+    background:#fff; width:100%; max-width:420px; border:1px solid var(--bord);
+    border-radius:14px; box-shadow:0 10px 30px rgba(27,110,243,.10); padding:32px 30px;
+  }
+  .marque{display:flex; align-items:center; gap:12px; margin-bottom:6px}
+  .logo{
+    width:46px; height:46px; border-radius:11px; flex:none;
+    background:linear-gradient(135deg,var(--bleu),var(--bleu-fonce));
+    color:#fff; font-weight:700; font-size:1.05rem;
+    display:flex; align-items:center; justify-content:center;
+  }
+  h1{font-size:1.35rem; margin:0}
+  .sous{color:var(--gris); margin:2px 0 22px; font-size:.92rem}
+  label{display:block; font-weight:600; font-size:.88rem; margin:14px 0 6px}
+  input{
+    width:100%; padding:11px 13px; font-size:1rem; color:var(--texte);
+    border:1px solid var(--bord); border-radius:9px; outline:none; transition:.15s;
+  }
+  input:focus{border-color:var(--bleu); box-shadow:0 0 0 3px rgba(27,110,243,.15)}
+  .champ-mdp{position:relative}
+  .voir{
+    position:absolute; right:8px; top:50%; transform:translateY(-50%);
+    background:none; border:none; color:var(--gris); cursor:pointer;
+    font-size:.82rem; padding:6px 8px;
+  }
+  button.principal{
+    width:100%; margin-top:22px; padding:12px; font-size:1rem; font-weight:600;
+    color:#fff; background:var(--bleu); border:none; border-radius:9px; cursor:pointer;
+    transition:.15s;
+  }
+  button.principal:hover{background:var(--bleu-fonce)}
+  .message{
+    display:none; margin-top:16px; padding:10px 12px; border-radius:9px;
+    font-size:.88rem; background:#fdecea; border:1px solid #f5c6c2; color:var(--erreur);
+  }
+  .message.visible{display:block}
+  .pied{margin-top:22px; font-size:.8rem; color:#9aa6b3; text-align:center}
+  .astuce{
+    margin-top:18px; background:var(--fond); border:1px solid #cfe2ff; border-radius:9px;
+    padding:10px 12px; font-size:.82rem; color:#3a5a80;
+  }
+</style>
+</head>
+<body>
+  <form class="carte" id="formConnexion" autocomplete="off">
+    <div class="marque">
+      <div class="logo">RSU</div>
+      <div>
+        <h1>Suivi RSU 2026</h1>
+      </div>
+    </div>
+    <p class="sous">Suivi du dénombrement et des interviews (visites à domicile)</p>
+
+    <label for="login">Identifiant</label>
+    <input type="text" id="login" name="login" placeholder="Votre identifiant"
+           autocomplete="username" required autofocus>
+
+    <label for="motdepasse">Mot de passe</label>
+    <div class="champ-mdp">
+      <input type="password" id="motdepasse" name="motdepasse" placeholder="Votre mot de passe"
+             autocomplete="current-password" required>
+      <button type="button" class="voir" id="basculeVoir" aria-label="Afficher le mot de passe">
+        Afficher
+      </button>
+    </div>
+
+    <div class="message" id="message"></div>
+
+    <button type="submit" class="principal">Se connecter</button>
+
+    <div class="astuce">
+      Compte de démonstration — Identifiant&nbsp;: <strong>RSU</strong> ·
+      Mot de passe&nbsp;: <strong>RSU</strong>
+    </div>
+
+    <p class="pied">Application interne · Données confidentielles</p>
+  </form>
+
+<script>
+  // --- Comptes autorisés (prototype). Voir la note de sécurité ci-dessous. ---
+  const COMPTES = {
+    "RSU": "RSU"
+  };
+
+  const form    = document.getElementById("formConnexion");
+  const message = document.getElementById("message");
+  const champLog = document.getElementById("login");
+  const champMdp = document.getElementById("motdepasse");
+
+  function afficherErreur(txt){
+    message.textContent = txt;
+    message.classList.add("visible");
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    message.classList.remove("visible");
+
+    const login = champLog.value.trim();
+    const mdp   = champMdp.value;
+
+    if (COMPTES.hasOwnProperty(login) && COMPTES[login] === mdp) {
+      // Connexion réussie -> on rejoint le menu de l'application.
+      // Adapter l'adresse si le serveur tourne sur un autre port.
+      window.location.href = "http://127.0.0.1:8000/";
+    } else {
+      afficherErreur("Identifiant ou mot de passe incorrect.");
+      champMdp.value = "";
+      champMdp.focus();
+    }
+  });
+
+  // Afficher / masquer le mot de passe.
+  const bascule = document.getElementById("basculeVoir");
+  bascule.addEventListener("click", function () {
+    const cache = champMdp.type === "password";
+    champMdp.type = cache ? "text" : "password";
+    bascule.textContent = cache ? "Masquer" : "Afficher";
+  });
+</script>
+</body>
+</html>

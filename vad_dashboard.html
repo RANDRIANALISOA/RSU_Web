@@ -1,0 +1,497 @@
+<title>Tableau de bord VAD</title>
+<style>
+  :root{
+    --bg:#eef1f6; --surface:#ffffff; --surface-2:#f7f9fc;
+    --sidebar:#0e1b2a; --sidebar-2:#16283c;
+    --ink:#16212e; --muted:#5d6b7d; --faint:#8794a4;
+    --border:#e3e8f0; --border-strong:#cdd6e2;
+    --accent:#0d9488;
+    --accent-soft:#0d948818;
+    --blue:#2563eb;
+    --good:#16a34a; --warn:#e0912f; --crit:#dc2f4b;
+    --A:#b91c1c; --B:#e0912f; --C:#eab308; --NC:#c3ccd8;
+    --shadow:0 1px 2px rgba(16,32,54,.06),0 6px 20px rgba(16,32,54,.06);
+    --radius:14px;
+  }
+  :root:not([data-theme="light"]){
+    @media (prefers-color-scheme:dark){
+      --bg:#0b1119; --surface:#121b26; --surface-2:#0f1822;
+      --sidebar:#080f18; --sidebar-2:#111e2c;
+      --ink:#e6ecf3; --muted:#9aa8b8; --faint:#6b7889;
+      --border:#22303f; --border-strong:#2d3d4f;
+      --accent:#2dd4bf; --accent-soft:#2dd4bf1f;
+      --blue:#60a5fa;
+      --good:#3ec17a; --warn:#f0b25a; --crit:#f4657f;
+      --A:#ef4444; --B:#f0a04b; --C:#facc15; --NC:#3a4a5c;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 26px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b1119; --surface:#121b26; --surface-2:#0f1822;
+    --sidebar:#080f18; --sidebar-2:#111e2c;
+    --ink:#e6ecf3; --muted:#9aa8b8; --faint:#6b7889;
+    --border:#22303f; --border-strong:#2d3d4f;
+    --accent:#2dd4bf; --accent-soft:#2dd4bf1f;
+    --blue:#60a5fa;
+    --good:#3ec17a; --warn:#f0b25a; --crit:#f4657f;
+    --A:#ef4444; --B:#f0a04b; --C:#facc15; --NC:#3a4a5c;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 26px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .tnum{font-variant-numeric:tabular-nums}
+  .wrap{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
+
+  /* ---- Sidebar ---- */
+  .side{background:var(--sidebar);color:#c7d2df;padding:22px 16px;position:sticky;top:0;height:100vh;overflow:auto}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .brand .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#0891b2);
+    display:grid;place-items:center;color:#fff;font-weight:800;font-size:14px;flex:none}
+  .brand b{color:#fff;font-size:15px;letter-spacing:.2px}
+  .brand span{display:block;font-size:11px;color:#7f8ea1}
+  .side .ctx{margin:16px 0 20px;padding:10px 12px;background:#ffffff0d;border:1px solid #ffffff14;border-radius:10px;font-size:12px;color:#9fb0c2}
+  .side .ctx b{color:#e7eef6;font-weight:600;display:block;font-size:13px}
+  .navlabel{font-size:10.5px;text-transform:uppercase;letter-spacing:.12em;color:#61748a;margin:16px 8px 7px}
+  .nav a{display:flex;align-items:center;gap:10px;padding:8px 11px;border-radius:9px;color:#b7c4d3;
+    text-decoration:none;font-size:13.5px;margin-bottom:1px;cursor:pointer;user-select:none}
+  .nav a .i{width:16px;text-align:center;opacity:.85}
+  .nav a.on{background:var(--accent-soft);color:#fff;box-shadow:inset 0 0 0 1px #2dd4bf30}
+  .nav a:hover:not(.on){background:#ffffff0d;color:#e7eef6}
+
+  /* ---- Main ---- */
+  .main{padding:24px 30px 60px;min-width:0}
+  .top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:6px}
+  .top h1{margin:0;font-size:23px;letter-spacing:-.02em;text-wrap:balance}
+  .top .sub{color:var(--muted);font-size:13.5px;margin-top:3px}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600;
+    background:var(--accent-soft);color:var(--accent);border:1px solid #0d948833}
+  .pill.live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 0 3px #16a34a2e}
+
+  .note{margin:14px 0 20px;padding:11px 14px;border-left:3px solid var(--warn);background:var(--surface);
+    border-radius:0 10px 10px 0;box-shadow:var(--shadow);font-size:13px;color:var(--muted)}
+  .note b{color:var(--ink)}
+
+  /* views */
+  .view{display:none;animation:fade .18s ease}
+  .view.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.view{animation:none}}
+
+  section{margin-top:22px}
+  .eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.13em;color:var(--faint);font-weight:700;margin:0 0 12px}
+  .eyebrow .num{color:var(--accent);margin-right:8px}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:13px}
+  .kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:15px 16px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:.9}
+  .kpi.b::before{background:var(--blue)} .kpi.g::before{background:var(--good)} .kpi.w::before{background:var(--warn)}
+  .kpi .k{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .kpi .v{font-size:27px;font-weight:750;letter-spacing:-.02em;margin-top:5px}
+  .kpi .v small{font-size:14px;font-weight:600;color:var(--muted)}
+  .kpi .d{font-size:12px;color:var(--faint);margin-top:2px}
+
+  .cards{display:grid;gap:16px}
+  .grid-2{grid-template-columns:1fr 1fr}
+  .grid-3{grid-template-columns:1.15fr 1fr 1fr}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:17px 18px;box-shadow:var(--shadow);min-width:0}
+  .card h3{margin:0 0 3px;font-size:14.5px;letter-spacing:-.01em}
+  .card .cap{color:var(--faint);font-size:12px;margin:0 0 14px}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  .tscroll{overflow-x:auto}
+  th,td{padding:8px 10px;text-align:right;white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  thead th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);border-bottom:1px solid var(--border-strong);font-weight:700}
+  tbody tr{border-bottom:1px solid var(--border)}
+  tbody tr:hover{background:var(--surface-2)}
+  tbody tr:last-child{border-bottom:none}
+  .minibar{height:6px;border-radius:4px;background:var(--accent);opacity:.85}
+  .chip{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11.5px;font-weight:600}
+  .chip.good{background:#16a34a1c;color:var(--good)} .chip.warn{background:#e0912f22;color:var(--warn)} .chip.crit{background:#dc2f4b1c;color:var(--crit)}
+  .dot{width:10px;height:10px;border-radius:3px;flex:none;display:inline-block}
+
+  .empty{background:var(--surface);border:1px dashed var(--border-strong);border-radius:var(--radius);
+    padding:44px 28px;text-align:center;color:var(--muted);box-shadow:var(--shadow)}
+  .empty .big{font-size:34px;margin-bottom:10px;opacity:.55}
+  .empty b{color:var(--ink);font-size:16px;display:block;margin-bottom:5px}
+
+  .foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--border);color:var(--faint);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  text{font-family:inherit}
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr} .side{position:static;height:auto}
+    .grid-2,.grid-3{grid-template-columns:1fr}
+  }
+</style>
+
+<div class="wrap">
+  <aside class="side">
+    <div class="brand">
+      <div class="mark">RSU</div>
+      <div><b>RSU&nbsp;2026</b><span>Registre Social Unique</span></div>
+    </div>
+    <div class="ctx">
+      Type de suivi<b>Visite à domicile (VAD)</b>
+      <div style="margin-top:7px;color:#7f8ea1">District<b style="color:#e7eef6;font-size:12.5px">Belo sur Tsiribihina · Menabe</b></div>
+    </div>
+    <div class="navlabel">Suivi VAD</div>
+    <nav class="nav" id="nav">
+      <a data-view="general" class="on"><span class="i">▤</span> Vue générale</a>
+      <a data-view="ciblage"><span class="i">◎</span> Ciblage / Éligibilité</a>
+      <a data-view="avancement"><span class="i">◔</span> Avancement</a>
+      <a data-view="demographie"><span class="i">⚇</span> Démographie</a>
+      <a data-view="qualite"><span class="i">✓</span> Qualité &amp; complétude</a>
+      <a data-view="couverture"><span class="i">☷</span> Couverture géo.</a>
+      <a data-view="gps"><span class="i">◍</span> Carte GPS</a>
+      <a data-view="agent"><span class="i">☰</span> Par agent</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="top">
+      <div>
+        <h1 id="vtitle">Suivi de la Visite à Domicile</h1>
+        <div class="sub" id="vsub">Enquête RSU · collecte Survey Solutions · 02 → 17 octobre 2025</div>
+      </div>
+      <span class="pill live">Pilote — 17 jours de collecte</span>
+    </div>
+
+    <div class="note">
+      <b>Maquette de proposition.</b> Chiffres réels du pilote <b>rsuefkt_25_rN_pil</b> (Belo sur Tsiribihina).
+      Cliquez une rubrique à gauche pour ouvrir ses résultats.
+    </div>
+
+    <!-- ============ VUE GÉNÉRALE ============ -->
+    <div class="view active" data-view="general">
+      <section>
+        <div class="kpis">
+          <div class="kpi"><div class="k">Ménages enquêtés</div><div class="v tnum">19 612</div><div class="d">100 % des entretiens transmis</div></div>
+          <div class="kpi b"><div class="k">Membres recensés</div><div class="v tnum">79 535</div><div class="d">≈ 4,1 par ménage</div></div>
+          <div class="kpi g"><div class="k">Ménages classés</div><div class="v tnum">5 305 <small>· 27 %</small></div><div class="d">éligibilité A / B / C calculée</div></div>
+          <div class="kpi"><div class="k">Agents actifs</div><div class="v tnum">177</div><div class="d">15 communes · 134 fokontany</div></div>
+          <div class="kpi w"><div class="k">Point GPS capté</div><div class="v tnum">89 <small>%</small></div><div class="d">17 460 / 19 612 ménages</div></div>
+          <div class="kpi"><div class="k">Durée d'entretien</div><div class="v tnum">38 <small>min</small></div><div class="d">médiane 31 min</div></div>
+        </div>
+      </section>
+      <section>
+        <p class="eyebrow"><span class="num">▤</span>Aperçu</p>
+        <div class="cards grid-3">
+          <div class="card">
+            <h3>Éligibilité au registre</h3><p class="cap">A = plus vulnérable</p>
+            <div style="display:flex;gap:16px;align-items:center">
+              <svg id="donut" viewBox="0 0 120 120" width="118" height="118"></svg>
+              <div id="donut-leg" style="font-size:12.5px;flex:1"></div>
+            </div>
+          </div>
+          <div class="card"><h3>Avancement quotidien</h3><p class="cap">Ménages / jour</p>
+            <svg id="timeline" viewBox="0 0 340 170" width="100%" height="150" preserveAspectRatio="none"></svg></div>
+          <div class="card"><h3>Statut &amp; nature</h3><p class="cap">Traitement des entretiens</p>
+            <div id="statbars"></div></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ CIBLAGE ============ -->
+    <div class="view" data-view="ciblage">
+      <section>
+        <p class="eyebrow"><span class="num">◎</span>Ciblage social — cœur de la VAD</p>
+        <div class="cards grid-2">
+          <div class="card">
+            <h3>Répartition d'éligibilité</h3><p class="cap">Classement de vulnérabilité des ménages</p>
+            <div style="display:flex;gap:18px;align-items:center">
+              <svg id="donut2" viewBox="0 0 120 120" width="140" height="140"></svg>
+              <div id="donut-leg2" style="font-size:13px;flex:1"></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Ménages éligibles par commune</h3><p class="cap">Nombre classé A / B / C</p>
+            <div class="tscroll"><table><thead><tr><th>Commune</th><th>Éligibles</th><th>Part</th><th></th></tr></thead>
+              <tbody id="elig-body"></tbody></table></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ AVANCEMENT ============ -->
+    <div class="view" data-view="avancement">
+      <section>
+        <p class="eyebrow"><span class="num">◔</span>Avancement de la collecte</p>
+        <div class="cards grid-2">
+          <div class="card"><h3>Ménages enquêtés par jour</h3><p class="cap">02 → 17 octobre 2025 · pic 1 734 le 14 oct.</p>
+            <svg id="timeline2" viewBox="0 0 340 190" width="100%" height="200" preserveAspectRatio="none"></svg></div>
+          <div class="card"><h3>Statut &amp; nature des entretiens</h3><p class="cap">Sur 19 612 entretiens</p>
+            <div id="statbars2"></div></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ DÉMOGRAPHIE ============ -->
+    <div class="view" data-view="demographie">
+      <section>
+        <p class="eyebrow"><span class="num">⚇</span>Démographie des ménages</p>
+        <div class="kpis" style="margin-bottom:16px">
+          <div class="kpi b"><div class="k">Hommes</div><div class="v tnum">26 953</div><div class="d">48 % de la population</div></div>
+          <div class="kpi w"><div class="k">Femmes</div><div class="v tnum">29 207</div><div class="d">52 % de la population</div></div>
+          <div class="kpi"><div class="k">Moins de 15 ans</div><div class="v tnum">40 <small>%</small></div><div class="d">population très jeune</div></div>
+          <div class="kpi g"><div class="k">Taille moyenne</div><div class="v tnum">4,1</div><div class="d">membres par ménage</div></div>
+        </div>
+        <div class="card" style="margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline">
+            <div><h3>Pyramide des âges</h3><p class="cap">56 144 membres résidents · effectif par tranche</p></div>
+            <div style="display:flex;gap:16px;font-size:12.5px;color:var(--muted)">
+              <span style="display:flex;align-items:center;gap:6px"><span class="dot" style="background:var(--blue)"></span>Hommes ◀</span>
+              <span style="display:flex;align-items:center;gap:6px"><span class="dot" style="background:var(--accent)"></span>Femmes ▶</span>
+            </div>
+          </div>
+          <svg id="pyramid" viewBox="0 0 900 560" width="100%" height="560" style="margin-top:8px"></svg>
+        </div>
+        <div class="card"><h3>Profil des ménages</h3><p class="cap">Composition &amp; documents d'identité</p>
+          <div id="profile"></div></div>
+      </section>
+    </div>
+
+    <!-- ============ QUALITÉ ============ -->
+    <div class="view" data-view="qualite">
+      <section>
+        <p class="eyebrow"><span class="num">✓</span>Qualité &amp; complétude</p>
+        <div class="kpis" id="quality"></div>
+      </section>
+    </div>
+
+    <!-- ============ COUVERTURE ============ -->
+    <div class="view" data-view="couverture">
+      <section>
+        <p class="eyebrow"><span class="num">☷</span>Couverture par commune</p>
+        <div class="card"><div class="tscroll"><table>
+          <thead><tr><th>Commune</th><th>Ménages</th><th>Membres</th><th>Éligibles A/B/C</th><th>Volume</th><th>GPS capté</th></tr></thead>
+          <tbody id="commune-body"></tbody></table></div></div>
+      </section>
+    </div>
+
+    <!-- ============ CARTE GPS ============ -->
+    <div class="view" data-view="gps">
+      <section>
+        <p class="eyebrow"><span class="num">◍</span>Carte GPS des ménages</p>
+        <div class="empty">
+          <div class="big">◍</div>
+          <b>Carte des points GPS — à câbler sur les contours fokontany</b>
+          17 460 ménages géolocalisés (89 %). Rendu prévu avec Leaflet + limites OCHA,
+          comme la carte du dénombrement (hors périmètre de cette maquette statique).
+        </div>
+      </section>
+    </div>
+
+    <!-- ============ PAR AGENT ============ -->
+    <div class="view" data-view="agent">
+      <section>
+        <p class="eyebrow"><span class="num">☰</span>Suivi par agent</p>
+        <div class="kpis" style="margin-bottom:16px">
+          <div class="kpi"><div class="k">Agents actifs</div><div class="v tnum">177</div><div class="d">médiane 112 ménages / agent</div></div>
+          <div class="kpi w"><div class="k">Entretiens rejetés</div><div class="v tnum">1 459</div><div class="d">7,4 % renvoyés aux agents</div></div>
+          <div class="kpi b"><div class="k">Durée moyenne</div><div class="v tnum">38 <small>min</small></div><div class="d">de 23 à 56 min selon l'agent</div></div>
+        </div>
+        <div class="card"><h3>Top agents par volume</h3><p class="cap">Ménages enquêtés · durée moy. · rejets superviseur</p>
+          <div class="tscroll"><table>
+            <thead><tr><th>Agent</th><th>Ménages</th><th>Durée moy.</th><th>Rejets</th><th>Volume</th></tr></thead>
+            <tbody id="agent-body"></tbody></table></div></div>
+      </section>
+    </div>
+
+    <div class="foot">
+      <span>Maquette VAD — proposée pour RSU_Web · non encore implémentée</span>
+      <span>Source : rsuefkt_25_rN_pil · export Survey Solutions 25.04.4 · 18 oct 2025</span>
+    </div>
+  </main>
+</div>
+
+<script>
+const fmt=n=>n.toLocaleString('fr-FR').replace(/ /g,' ');
+
+/* ---------- DATA ---------- */
+const elig=[
+  {k:'A — forte vulnérabilité',v:2303,c:'--A'},
+  {k:'B — vulnérabilité moyenne',v:2779,c:'--B'},
+  {k:'C — vulnérabilité faible',v:223,c:'--C'},
+  {k:'Non encore classé',v:14307,c:'--NC'}
+];
+const daily=[["02",42],["03",246],["04",648],["05",899],["06",1189],["07",1427],["08",1557],
+  ["09",1666],["10",1502],["11",1589],["12",1613],["13",1718],["14",1734],["15",1518],["16",1264],["17",492]];
+const pyr=[['80+',109,180],['75-79',116,149],['70-74',214,256],['65-69',367,338],
+  ['60-64',438,489],['55-59',617,637],['50-54',755,773],['45-49',888,917],
+  ['40-44',1059,1122],['35-39',1140,1356],['30-34',1857,1945],['25-29',2306,2536],
+  ['20-24',2595,3347],['15-19',3044,3659],['10-14',3613,3597],['5-9',3803,3901],['0-4',4023,3998]];
+const communes=[{"nom":"BELO SUR TSIRIBIHINA","men":4233,"mem":16098,"elig":1163,"gpspct":94},
+{"nom":"TSARAOTANA","men":2026,"mem":9092,"elig":683,"gpspct":85},
+{"nom":"ANKALALOBE","men":2001,"mem":8342,"elig":488,"gpspct":91},
+{"nom":"BEROBOKA","men":1592,"mem":6557,"elig":440,"gpspct":90},
+{"nom":"MASOARIVO","men":1576,"mem":6392,"elig":471,"gpspct":89},
+{"nom":"BEMARIVO ANKIRONDRO","men":1400,"mem":5627,"elig":328,"gpspct":99},
+{"nom":"DELTA","men":1290,"mem":5056,"elig":252,"gpspct":96},
+{"nom":"TSIMAFANA","men":1150,"mem":4578,"elig":302,"gpspct":94},
+{"nom":"BEREVO","men":904,"mem":3823,"elig":250,"gpspct":87},
+{"nom":"ANKOROROKY","men":681,"mem":3030,"elig":160,"gpspct":94},
+{"nom":"ABOALIMENA","men":607,"mem":2951,"elig":194,"gpspct":85},
+{"nom":"BELINTA","men":539,"mem":2373,"elig":140,"gpspct":89},
+{"nom":"AMBIKY","men":502,"mem":2173,"elig":224,"gpspct":71},
+{"nom":"ANDIMAKY MANAMBOLO","men":438,"mem":1793,"elig":167,"gpspct":94},
+{"nom":"ANTSOHA","men":202,"mem":771,"elig":43,"gpspct":92}];
+const agents=[{ag:"EQ_BELO_0031",n:211,dur:53,rej:14},{ag:"EQ_BELO_0135",n:197,dur:29,rej:51},
+{ag:"EQ_BELO_0192",n:187,dur:23,rej:3},{ag:"EQ_BELO_0127",n:187,dur:36,rej:39},
+{ag:"EQ_BELO_0195",n:186,dur:25,rej:6},{ag:"EQ_BELO_0193",n:186,dur:30,rej:26},
+{ag:"EQ_BELO_0191",n:186,dur:38,rej:37},{ag:"EQ_BELO_0028",n:185,dur:27,rej:15},
+{ag:"EQ_BELO_0045",n:185,dur:56,rej:15},{ag:"EQ_BELO_0040",n:181,dur:35,rej:25},
+{ag:"EQ_BELO_0272",n:176,dur:26,rej:34},{ag:"EQ_BELO_0140",n:172,dur:31,rej:39}];
+
+const VIEWS={
+  general:['Suivi de la Visite à Domicile','Enquête RSU · collecte Survey Solutions · 02 → 17 octobre 2025'],
+  ciblage:['Ciblage / Éligibilité','Classement de vulnérabilité A / B / C — la finalité du RSU'],
+  avancement:['Avancement de la collecte','Rythme quotidien et statut des entretiens'],
+  demographie:['Démographie des ménages','Structure de la population recensée'],
+  qualite:['Qualité & complétude','Contrôles, rejets et champs manquants'],
+  couverture:['Couverture par commune','Ménages, membres et éligibles par commune'],
+  gps:['Carte GPS des ménages','Localisation des ménages enquêtés'],
+  agent:['Suivi par agent','Volume, durée et rejets par enquêteur']
+};
+
+/* ---------- RENDER HELPERS ---------- */
+function donut(svgId,legId,R){
+  const tot=elig.reduce((s,d)=>s+d.v,0),cx=60,cy=60,C=2*Math.PI*R;let off=0;
+  const svg=document.getElementById(svgId);
+  svg.innerHTML=`<circle cx="60" cy="60" r="${R}" fill="none" stroke="var(--border)" stroke-width="14"/>`;
+  elig.forEach(d=>{const len=C*d.v/tot;
+    svg.innerHTML+=`<circle cx="60" cy="60" r="${R}" fill="none" stroke="var(${d.c})" stroke-width="14"
+      stroke-dasharray="${len} ${C-len}" stroke-dashoffset="${-off}" transform="rotate(-90 60 60)"/>`;off+=len;});
+  svg.innerHTML+=`<text x="60" y="56" text-anchor="middle" font-size="20" font-weight="700" fill="var(--ink)">27%</text>
+    <text x="60" y="72" text-anchor="middle" font-size="9" fill="var(--muted)">classés</text>`;
+  document.getElementById(legId).innerHTML=elig.map(d=>
+    `<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0">
+       <span style="display:flex;align-items:center;gap:7px"><span class="dot" style="background:var(${d.c})"></span>${d.k}</span>
+       <b class="tnum">${fmt(d.v)}</b></div>`).join('');
+}
+function timeline(svgId,H){
+  const W=340,pl=8,pb=22,pt=10,max=1800,n=daily.length;
+  const x=i=>pl+i*(W-pl-6)/(n-1), y=v=>pt+(H-pt-pb)*(1-v/max);
+  const pts=daily.map((d,i)=>`${x(i)},${y(d[1])}`).join(' ');
+  const area=`${pl},${H-pb} ${pts} ${x(n-1)},${H-pb}`;
+  let g='';[450,900,1350,1800].forEach(v=>{g+=`<line x1="${pl}" x2="${W-6}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/>
+     <text x="${W-4}" y="${y(v)+3}" font-size="8" fill="var(--faint)" text-anchor="end">${v}</text>`;});
+  const dots=daily.map((d,i)=>`<circle cx="${x(i)}" cy="${y(d[1])}" r="${i===n-1?3.4:2}" fill="var(--accent)"/>`).join('');
+  const lab=daily.map((d,i)=>i%2===0?`<text x="${x(i)}" y="${H-7}" font-size="8" fill="var(--faint)" text-anchor="middle">${d[0]}</text>`:'').join('');
+  document.getElementById(svgId).innerHTML=
+    `<defs><linearGradient id="ga${svgId}" x1="0" x2="0" y1="0" y2="1">
+       <stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/>
+     </linearGradient></defs>${g}<polygon points="${area}" fill="url(#ga${svgId})"/>
+     <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>${dots}${lab}`;
+}
+function statbars(id){
+  const rows=[{k:'Complété (transmis)',v:19312,t:19612,c:'--good'},{k:'Validé superviseur',v:300,t:19612,c:'--blue'},
+    {k:'Ménage « nouveau »',v:13442,t:19612,c:'--accent'},{k:'Sur liste eFokontany',v:6170,t:19612,c:'--warn'}];
+  document.getElementById(id).innerHTML=rows.map(r=>
+    `<div style="margin:11px 0"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px">
+       <span style="color:var(--muted)">${r.k}</span><b class="tnum">${fmt(r.v)}</b></div>
+     <div style="height:8px;background:var(--surface-2);border-radius:5px;overflow:hidden">
+       <div style="height:100%;width:${100*r.v/r.t}%;background:var(${r.c});border-radius:5px"></div></div></div>`).join('');
+}
+function pyramid(){
+  const W=900,H=560,mid=W/2,gap=70,pl=18,pr=18,top=22,bot=32;
+  const bw=(W/2-gap/2-pl-38);          /* largeur max d'une demi-barre */
+  const max=4500,rh=20,pad=6.6;
+  const tot=56144;
+  let s='';
+  /* quadrillage + graduations symétriques */
+  [0,1500,3000,4500].forEach(v=>{
+    const gl=mid-gap/2-(v/max)*bw, gr=mid+gap/2+(v/max)*bw, yb=top, ye=H-bot;
+    if(v>0){
+      s+=`<line x1="${gl}" x2="${gl}" y1="${yb}" y2="${ye}" stroke="var(--border)"/>`;
+      s+=`<line x1="${gr}" x2="${gr}" y1="${yb}" y2="${ye}" stroke="var(--border)"/>`;
+    }
+    s+=`<text x="${gl}" y="${H-13}" text-anchor="middle" font-size="11" fill="var(--faint)" class="tnum">${fmt(v)}</text>`;
+    s+=`<text x="${gr}" y="${H-13}" text-anchor="middle" font-size="11" fill="var(--faint)" class="tnum">${fmt(v)}</text>`;
+  });
+  /* axe central */
+  s+=`<line x1="${mid-gap/2}" x2="${mid-gap/2}" y1="${top}" y2="${H-bot}" stroke="var(--border-strong)"/>`;
+  s+=`<line x1="${mid+gap/2}" x2="${mid+gap/2}" y1="${top}" y2="${H-bot}" stroke="var(--border-strong)"/>`;
+  /* barres */
+  pyr.forEach((d,i)=>{
+    const yy=top+4+i*(rh+pad), hw=(d[1]/max)*bw, fw=(d[2]/max)*bw, cy=yy+rh/2+4;
+    s+=`<rect x="${mid-gap/2-hw}" y="${yy}" width="${hw}" height="${rh}" rx="3" fill="var(--blue)" opacity=".9"/>`;
+    s+=`<rect x="${mid+gap/2}" y="${yy}" width="${fw}" height="${rh}" rx="3" fill="var(--accent)" opacity=".92"/>`;
+    /* étiquette de tranche au centre */
+    s+=`<text x="${mid}" y="${cy}" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">${d[0]}</text>`;
+    /* effectifs (dans la barre si assez large, sinon au bord) */
+    const inM=hw>58, inF=fw>58;
+    s+=`<text x="${inM?mid-gap/2-hw+7:mid-gap/2-hw-6}" y="${cy}" text-anchor="${inM?'start':'end'}" font-size="11" font-weight="700" fill="${inM?'#fff':'var(--muted)'}" class="tnum">${fmt(d[1])}</text>`;
+    s+=`<text x="${inF?mid+gap/2+fw-7:mid+gap/2+fw+6}" y="${cy}" text-anchor="${inF?'end':'start'}" font-size="11" font-weight="700" fill="${inF?'#fff':'var(--muted)'}" class="tnum">${fmt(d[2])}</text>`;
+  });
+  /* en-têtes de colonnes */
+  s+=`<text x="${pl+4}" y="${top-6}" font-size="12" font-weight="700" fill="var(--blue)">◀ Hommes</text>`;
+  s+=`<text x="${mid}" y="${top-6}" text-anchor="middle" font-size="11" fill="var(--faint)">Âge</text>`;
+  s+=`<text x="${W-pr-4}" y="${top-6}" text-anchor="end" font-size="12" font-weight="700" fill="var(--accent)">Femmes ▶</text>`;
+  document.getElementById('pyramid').innerHTML=s;
+}
+function profile(){
+  const rows=[{k:'Possède un NUI (identité)',v:'21 825',p:28,c:'--warn',s:'28 % des membres'},
+    {k:'Permission RSU accordée',v:'19 330',p:99,c:'--good',s:'99 % des ménages'},
+    {k:'Activité principale : agriculture',v:'28 748',p:80,c:'--accent',s:'≈ 80 % des actifs'},
+    {k:'Enfants de moins de 5 ans',v:'8 021',p:14,c:'--blue',s:'14 % de la population'},
+    {k:'Personnes de 65 ans et +',v:'1 729',p:3,c:'--NC',s:'3 % de la population'}];
+  document.getElementById('profile').innerHTML=rows.map(r=>
+    `<div style="margin:13px 0 15px"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+       <span>${r.k}</span><b class="tnum">${r.v}</b></div>
+     <div style="height:7px;background:var(--surface-2);border-radius:5px;overflow:hidden">
+       <div style="height:100%;width:${r.p}%;background:var(${r.c});border-radius:5px"></div></div>
+     <div style="font-size:11px;color:var(--faint);margin-top:3px">${r.s}</div></div>`).join('');
+}
+function quality(){
+  const q=[{k:'Entretiens avec erreur de validation',v:'97',d:'0,5 % — à revoir',cls:'g'},
+    {k:'Entretiens rejetés (superviseur)',v:'1 459',d:'7,4 % renvoyés à l\'agent',cls:'w'},
+    {k:'Doublon carte RSU signalé',v:'210',d:'ménages déjà enregistrés',cls:'w'},
+    {k:'Point GPS manquant',v:'2 152',d:'11 % — à re-localiser',cls:'w'},
+    {k:'Permission refusée',v:'15',d:'ménages sans consentement',cls:''},
+    {k:'Questions laissées vides',v:'15 199',d:'entretiens ≥ 1 champ vide',cls:''}];
+  document.getElementById('quality').innerHTML=q.map(r=>
+    `<div class="kpi ${r.cls}"><div class="k">${r.k}</div><div class="v tnum">${r.v}</div><div class="d">${r.d}</div></div>`).join('');
+}
+function communeTable(){
+  const max=Math.max(...communes.map(c=>c.men));
+  document.getElementById('commune-body').innerHTML=communes.map(c=>{
+    const cl=c.gpspct>=90?'good':c.gpspct>=80?'warn':'crit';
+    return `<tr><td>${c.nom}</td><td class="tnum">${fmt(c.men)}</td><td class="tnum">${fmt(c.mem)}</td>
+      <td class="tnum">${fmt(c.elig)}</td><td style="width:130px"><div class="minibar" style="width:${100*c.men/max}%"></div></td>
+      <td><span class="chip ${cl}">${c.gpspct}%</span></td></tr>`;}).join('');
+}
+function eligTable(){
+  const rows=communes.map(c=>({nom:c.nom,elig:c.elig,pct:Math.round(100*c.elig/c.men)})).sort((a,b)=>b.elig-a.elig);
+  const max=Math.max(...rows.map(r=>r.elig));
+  document.getElementById('elig-body').innerHTML=rows.map(r=>
+    `<tr><td>${r.nom}</td><td class="tnum">${fmt(r.elig)}</td><td class="tnum">${r.pct}%</td>
+      <td style="width:110px"><div class="minibar" style="width:${100*r.elig/max}%;background:var(--B)"></div></td></tr>`).join('');
+}
+function agentTable(){
+  const max=Math.max(...agents.map(a=>a.n));
+  document.getElementById('agent-body').innerHTML=agents.map(a=>{
+    const cl=a.rej>=35?'crit':a.rej>=20?'warn':'good';
+    return `<tr><td>${a.ag}</td><td class="tnum">${a.n}</td><td class="tnum">${a.dur} min</td>
+      <td><span class="chip ${cl}">${a.rej}</span></td>
+      <td style="width:120px"><div class="minibar" style="width:${100*a.n/max}%"></div></td></tr>`;}).join('');
+}
+
+/* render all (once) */
+donut('donut','donut-leg',48); donut('donut2','donut-leg2',48);
+timeline('timeline',150); timeline('timeline2',190);
+statbars('statbars'); statbars('statbars2');
+pyramid(); profile(); quality(); communeTable(); eligTable(); agentTable();
+
+/* ---------- NAV / view switch ---------- */
+const nav=document.getElementById('nav');
+nav.addEventListener('click',e=>{
+  const a=e.target.closest('a[data-view]'); if(!a) return;
+  const v=a.dataset.view;
+  nav.querySelectorAll('a').forEach(x=>x.classList.toggle('on',x===a));
+  document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.dataset.view===v));
+  document.getElementById('vtitle').textContent=VIEWS[v][0];
+  document.getElementById('vsub').textContent=VIEWS[v][1];
+  window.scrollTo({top:0,behavior:'auto'});
+});
+</script>

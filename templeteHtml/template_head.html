@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>RSU 2026 — Rapport de dénombrement</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<!--RSU_CHARTJS-->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<!--RSU_STYLES-->
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">📊</div>
+    <div>
+      <div class="brand-name">RSU 2026</div>
+      <div class="brand-sub">Rapport de dénombrement</div>
+    </div>
+  </div>
+
+  <div class="nav-section">Navigation</div>
+
+  <button class="nav-item active" onclick="showPage('page-general',this)">
+    <span class="nav-icon">🏠</span> Vue générale
+  </button>
+  <div class="nav-sub" id="general-drill"></div>
+
+  <button class="nav-item" onclick="showPage('page-agent',this)">
+    <span class="nav-icon">👥</span> Par Agent Recenseur
+  </button>
+  <div class="nav-sub" id="agent-drill"></div>
+
+  <button class="nav-item" onclick="showPage('page-zone',this)">
+    <span class="nav-icon">🗂️</span> Par Zone / Segment
+  </button>
+  <div class="nav-sub" id="zone-drill"></div>
+  <button class="nav-item" onclick="showPage('page-gps',this)">
+    <span class="nav-icon">🗺️</span> Carte GPS
+  </button>
+  <div class="nav-sub" id="gps-drill"></div>
+
+  <button class="nav-item" onclick="showPage('page-gpscap',this)">
+    <span class="nav-icon">📍</span> Taux de capture GPS
+  </button>
+  <div class="nav-sub" id="gpscap-drill"></div>
+
+  <button class="nav-item" onclick="showPage('page-qualite',this)">
+    <span class="nav-icon">✅</span> Qualité des données
+  </button>
+  <div class="nav-sub" id="qualite-drill"></div>
+  <button class="nav-item" onclick="showPage('page-historique',this)">
+    <span class="nav-icon">📈</span> Historique / Évolution
+  </button>
+  <div class="nav-sub" id="historique-drill"></div>
+  <button class="nav-item" onclick="showPage('page-multi',this)">
+    <span class="nav-icon">🔢</span> Segment multiple
+  </button>
+  <div class="nav-sub" id="multi-drill"></div>
+
+  <div class="sidebar-footer">
+    <div class="info-chip" id="sidebar-info">
+      Chargement…
+    </div>
+    <div class="contact-chip">
+      En cas de problème, appelé ou écrire un message à <strong>RANDRIANALISOA Francis</strong><br/>
+      Phone et WhatsApp : <a href="tel:+261385819320">0385819320</a><br/>
+      E-mail : <a href="mailto:nalisoafran6@gmail.com">nalisoafran6@gmail.com</a>
+    </div>
+  </div>
+</aside>
+
+<div class="main">
+
+  <div class="topbar">
+    <div>
+      <div class="topbar-title" id="page-title">Vue générale</div>
+      <div class="topbar-sub">Données au <span id="top-date"></span></div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-outline" onclick="exportCSV()">⬇ CSV</button>
+      <button class="btn btn-outline" onclick="window.print()">🖨 Imprimer</button>
+    </div>
+  </div>
+
+  <!-- ══ PAGE : VUE GÉNÉRALE ══════════════════════════════ -->
+  <div class="page active" id="page-general">
+
+    <div id="general-placeholder" class="drill-placeholder">
+      👈 Choisissez une commune puis un fokontany dans le menu à gauche pour afficher les résultats.
+    </div>
+
+    <div id="general-results" style="display:none">
+    <div class="table-title" id="general-scope" style="margin:0 0 14px;">Ensemble de la base de données</div>
+    <!-- Couverture du dénombrement vs projection ménages 2025 (web ; rempli par
+         renderCouverture() si le serveur injecte COUVERTURE). -->
+    <div id="couverture-panel" style="display:none;margin:0 0 18px;"></div>
+    <div class="kpi-grid">
+      <div class="kpi-card blue">
+        <div class="kpi-label">Ménages dénombrés</div>
+        <div class="kpi-value" id="kpi-total">—</div>
+        <div class="kpi-sub"><span class="kpi-badge badge-up" id="kpi-total-sub"></span></div>
+      </div>
+      <div class="kpi-card green">
+        <div class="kpi-label">Ménages présents</div>
+        <div class="kpi-value" id="kpi-presents">—</div>
+        <div class="kpi-sub"><span class="kpi-badge badge-up" id="kpi-presents-pct"></span></div>
+      </div>
+      <div class="kpi-card yellow">
+        <div class="kpi-label">Avec carnet</div>
+        <div class="kpi-value" id="kpi-carnet">—</div>
+        <div class="kpi-sub"><span class="kpi-badge badge-up" id="kpi-carnet-pct"></span></div>
+      </div>
+      <div class="kpi-card blue">
+        <div class="kpi-label">Segments / Bâtiments</div>
+        <div class="kpi-value" id="kpi-segments">—</div>
+        <div class="kpi-sub" id="kpi-batiments-sub"></div>
+      </div>
+      <div class="kpi-card blue">
+        <div class="kpi-label">Tps moyen (min)</div>
+        <div class="kpi-value" id="kpi-tps">—</div>
+        <div class="kpi-sub">par segment recensé</div>
+      </div>
+    </div>
+
+    <!-- Graphiques agrégés : visibles à tous les niveaux (base, commune, fokontany) -->
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Évolution journalière</div><div class="chart-sub">Ménages dénombrés par date</div></div></div>
+        <div class="chart-wrap"><canvas id="chart-line-date"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Agents actifs par jour</div><div class="chart-sub">Nombre d'agents ayant dénombré chaque jour</div></div></div>
+        <div class="chart-wrap"><canvas id="chart-agents-day"></canvas></div>
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Présence des ménages</div><div class="chart-sub">Présent vs Absent</div></div></div>
+        <div class="chart-wrap"><canvas id="chart-donut-presence"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Possession de carnet</div><div class="chart-sub">Répartition des 4 modalités</div></div></div>
+        <div class="chart-wrap"><canvas id="chart-donut-carnet"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Statistiques individuelles par agent : affichées uniquement au niveau fokontany -->
+    <div id="general-agent-blocks" style="display:none">
+      <div class="table-title" style="margin:24px 0 12px;">Statistiques par Agent Recenseur — fokontany sélectionné</div>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-header"><div><div class="chart-title">Ménages dénombrés par Agent</div><div class="chart-sub">Total, Présents, Avec carnet</div></div></div>
+          <div class="chart-wrap"><canvas id="chart-bar-agent"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header"><div><div class="chart-title">Temps moyen par Agent</div><div class="chart-sub">En minutes, par segment</div></div></div>
+          <div class="chart-wrap"><canvas id="chart-tps-agent"></canvas></div>
+        </div>
+      </div>
+      <div class="chart-card" style="margin-bottom:24px;">
+        <div style="padding:16px 20px;">
+          <div class="chart-title" style="margin-bottom:16px;">Avancement par Agent Recenseur</div>
+          <div class="progress-list" id="progress-agent"></div>
+        </div>
+      </div>
+    </div>
+    </div><!-- /general-results -->
+
+  </div>
+
+  <!-- ══ PAGE : PAR AGENT ═════════════════════════════════ -->
+  <div class="page" id="page-agent">
+    <div id="agent-placeholder" class="drill-placeholder">
+      👈 Choisissez une commune puis un fokontany dans le menu à gauche pour afficher les agents de la zone.
+    </div>
+
+    <!-- Base / commune : tableau récapitulatif des agents (pas de détail individuel) -->
+    <div id="agent-summary" style="display:none">
+      <div class="note-box">Vue d'ensemble des agents de la zone. Pour le <strong>détail individuel</strong> d'un agent (graphiques et segments traités), choisissez un <strong>fokontany</strong> dans le menu à gauche.</div>
+      <div class="table-title" id="agent-summary-scope" style="margin:4px 0 14px;">Ensemble de la base de données</div>
+      <div class="table-card">
+        <div class="table-toolbar"><div class="table-title">👥 Récapitulatif par Agent Recenseur</div></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Agent</th><th>Ménages</th><th>Segments</th><th>% Présents</th><th>% Avec carnet</th><th>Tps moyen (min)</th></tr>
+            </thead>
+            <tbody id="agent-summary-tbody"></tbody>
+          </table>
+        </div>
+        <div class="table-footer"><span id="agent-summary-count">—</span></div>
+      </div>
+    </div>
+
+    <!-- Fokontany : détail individuel (onglets + graphiques par agent) -->
+    <div id="agent-results" style="display:none">
+      <div class="ar-tabs" id="agent-tabs"></div>
+      <div id="agent-content"></div>
+    </div>
+  </div>
+
+  <!-- ══ PAGE : PAR ZONE / SEGMENT ════════════════════════ -->
+  <div class="page" id="page-zone">
+    <div class="table-card">
+      <div class="table-toolbar">
+        <div class="table-title">Récapitulatif par Fokontany / Segment</div>
+        <input class="search-input" id="zone-search" placeholder="🔍  Rechercher un fokontany/segment..." oninput="renderZoneTable()"/>
+      </div>
+      <div class="table-wrap">
+        <table id="zone-table">
+          <thead>
+            <tr>
+              <th>Commune</th><th>Fokontany</th><th>Segment</th><th>Agent(s)</th><th>Ménages</th><th>Bâtiments</th>
+              <th>% Présents</th><th>% Avec carnet</th><th>Tps moyen (min)</th>
+            </tr>
+          </thead>
+          <tbody id="zone-tbody"></tbody>
+        </table>
+      </div>
+      <div class="table-footer"><span id="zone-count">—</span></div>
+    </div>
+  </div>
+
+  <!-- ══ PAGE : CARTE GPS ═════════════════════════════════ -->
+  <div class="page" id="page-gps">
+    <div id="gps-placeholder" class="drill-placeholder">
+      👈 Choisissez une commune puis un fokontany dans le menu à gauche pour afficher la carte.
+    </div>
+    <div id="gps-results" style="display:none">
+      <div class="note-box" id="gps-note">Chaque point représente un ménage géolocalisé.</div>
+      <div class="export-bar" style="margin-bottom:12px;">
+        <span class="label">Filtrer par date :</span>
+        <div id="map-filters" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+      </div>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <!-- ══ PAGE : TAUX DE CAPTURE GPS ═══════════════════════ -->
+  <div class="page" id="page-gpscap">
+    <div id="gpscap-placeholder" class="drill-placeholder">
+      👈 Choisissez une commune puis un fokontany dans le menu à gauche pour afficher le taux de capture GPS.
+    </div>
+    <div id="gpscap-results" style="display:none">
+      <div class="note-box">Le GPS d'un ménage est « capturé » lorsque ses coordonnées (latitude et longitude) sont des nombres valides. Le <strong>taux de non-capture</strong> est la proportion de ménages <strong>sans</strong> coordonnées GPS sur le total des ménages. Niveaux : cliquez sur <strong>« Taux de capture GPS »</strong> pour l'ensemble de la base, sur une <strong>commune</strong> pour la commune, sur un <strong>fokontany</strong> pour le fokontany.</div>
+      <div class="table-title" id="gpscap-scope" style="margin:4px 0 14px;">Ensemble de la base de données</div>
+      <div class="kpi-grid">
+        <div class="kpi-card blue">
+          <div class="kpi-label">Ménages dénombrés</div>
+          <div class="kpi-value" id="gpscap-total">—</div>
+          <div class="kpi-sub">total dénombré</div>
+        </div>
+        <div class="kpi-card green">
+          <div class="kpi-label">GPS capturés</div>
+          <div class="kpi-value" id="gpscap-ok">—</div>
+          <div class="kpi-sub"><span class="kpi-badge badge-up" id="gpscap-ok-pct"></span></div>
+        </div>
+        <div class="kpi-card red">
+          <div class="kpi-label">GPS non capturés</div>
+          <div class="kpi-value" id="gpscap-ko">—</div>
+          <div class="kpi-sub"><span class="kpi-badge badge-down" id="gpscap-ko-pct"></span></div>
+        </div>
+        <div class="kpi-card yellow">
+          <div class="kpi-label">Taux de non-capture</div>
+          <div class="kpi-value" id="gpscap-rate">—</div>
+          <div class="kpi-sub">GPS non capturés / total</div>
+        </div>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-header"><div><div class="chart-title">Répartition de la capture GPS</div><div class="chart-sub">Capturés vs non capturés</div></div></div>
+          <div class="chart-wrap"><canvas id="gpscap-donut"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ PAGE : QUALITÉ DES DONNÉES ═══════════════════════ -->
+  <div class="page" id="page-qualite">
+    <div class="charts-grid">
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Possession de carnet de dénombrement</div><div class="chart-sub">4 modalités</div></div></div>
+        <div class="chart-wrap"><canvas id="qual-carnet"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Présence du ménage</div><div class="chart-sub">Présent vs Absent</div></div></div>
+        <div class="chart-wrap"><canvas id="qual-presence"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Accès à l'électricité</div><div class="chart-sub">Bâtiments</div></div></div>
+        <div class="chart-wrap"><canvas id="qual-elec"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Taille des ménages</div><div class="chart-sub">Nombre de membres déclarés</div></div></div>
+        <div class="chart-wrap"><canvas id="qual-taille"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">Statut des segments (interviews)</div><div class="chart-sub">Complété vs Validé par le superviseur</div></div></div>
+        <div class="chart-wrap"><canvas id="qual-statut"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-header"><div><div class="chart-title">GPS renseigné</div><div class="chart-sub">Ménages avec coordonnées valides</div></div></div>
+        <div class="chart-wrap"><canvas id="qual-gps"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ PAGE : HISTORIQUE / ÉVOLUTION ════════════════════ -->
+  <div class="page" id="page-historique">
+    <div class="kpi-grid" id="hist-kpis"></div>
+    <div class="charts-grid">
+      <div class="chart-card" style="grid-column:span 2">
+        <div class="chart-header"><div><div class="chart-title">Évolution de la collecte</div><div class="chart-sub">Ménages dénombrés par date</div></div></div>
+        <div class="chart-wrap" style="height:260px"><canvas id="hist-line"></canvas></div>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-toolbar"><div class="table-title">Détail journalier</div></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Ménages recensés</th><th>Segments actifs</th><th>Agents actifs</th><th>Tps moyen (min)</th></tr></thead>
+          <tbody id="hist-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ PAGE : SEGMENT MULTIPLE ══════════════════════════ -->
+  <div class="page" id="page-multi">
+    <div id="multi-placeholder" class="drill-placeholder">
+      👈 Choisissez une commune puis un fokontany dans le menu à gauche pour afficher les segments multiples.
+    </div>
+    <div id="multi-results" style="display:none">
+      <div class="note-box">Un segment est dit <strong>multiple</strong> lorsque le même code de segment se répète plus d'une fois dans le fokontany, d'après <strong>DEN_MENAGE</strong> (1 ligne = 1 segment dénombré).</div>
+      <div class="table-card">
+        <div class="table-toolbar">
+          <div class="table-title" id="multi-title">🔢 Segments multiples du fokontany</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead id="multi-thead">
+              <tr><th>Segment</th><th>Nombre</th><th>Agents concernés</th></tr>
+            </thead>
+            <tbody id="multi-tbody"></tbody>
+          </table>
+        </div>
+        <div class="table-footer"><span id="multi-count">—</span></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  DONNÉES — générées par Stata (rapport_RSU.do) à partir de :
+//  DEN_MENAGE.dta + segment_roster.dta + interview__diagnostics.dta
+// ══════════════════════════════════════════════════════════════════
