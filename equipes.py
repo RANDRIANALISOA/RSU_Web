@@ -366,6 +366,11 @@ def page_choix_traitement(district_txt) -> str:
          '<div class="ic">📊</div><div class="t">Tableau de bord (suivi)</div>'
          '<div class="d">Consulter le rapport de suivi du dénombrement pour votre '
          'district.</div><div class="go">Ouvrir →</div></a>',
+         '<a class="ca" href="/equipe">'
+         '<div class="ic">👔</div><div class="t">Équipe technique</div>'
+         '<div class="d">Consulter l’encadrement (Coordonnateur régional, '
+         'Superviseurs Techniques par axe, Traitement, Expert survey) affecté à '
+         'votre district.</div><div class="go">Ouvrir →</div></a>',
          '<a class="ca" href="/traitement/equipes">'
          '<div class="ic">👥</div><div class="t">Remplir la base Chef d’Équipe et '
          'Agent</div>'
@@ -379,6 +384,10 @@ def page_choix_traitement(district_txt) -> str:
          'par agent (avec équilibrage optionnel) à partir du dénombrement transcrit '
          'de votre district.</div>'
          '<div class="go">Ouvrir →</div></a>',
+         '<a class="ca" href="/journal">'
+         '<div class="ic">📓</div><div class="t">Mon journal de bord</div>'
+         '<div class="d">Consigner les activités que vous avez réalisées dans la '
+         'journée.</div><div class="go">Ouvrir →</div></a>',
          '</div>', '</div></body></html>']
     return "".join(h)
 

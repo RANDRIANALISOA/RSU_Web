@@ -1,0 +1,16 @@
+[Unit]
+Description=RSU-Web (rapport RSU 2026, serveur http.server)
+After=network.target
+
+[Service]
+User=rse
+Group=rse
+WorkingDirectory=/home/rse/rsu-web
+Environment="RSU_PREFIXE=/rsu-web"
+# La base rsu_local.sqlite est lue dans WorkingDirectory par défaut.
+ExecStart=/home/rse/rsu-web/venv/bin/python /home/rse/rsu-web/serveur_app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

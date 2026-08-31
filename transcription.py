@@ -90,6 +90,15 @@ def page_choix_transcription(district_txt) -> str:
          '<div class="ic">🏠</div><div class="t">Transcription — Visite à domicile</div>'
          '<div class="d">Transcription des données de visite à domicile (VAD).</div>'
          '<span class="ruban">En cours de conception</span></a>',
+         '<a class="ca" href="/equipe">'
+         '<div class="ic">👔</div><div class="t">Équipe technique</div>'
+         '<div class="d">Consulter l’encadrement (Coordonnateur régional, '
+         'Superviseurs Techniques par axe, Traitement, Expert survey) affecté à '
+         'votre district.</div><div class="go">Ouvrir →</div></a>',
+         '<a class="ca" href="/journal">'
+         '<div class="ic">📓</div><div class="t">Mon journal de bord</div>'
+         '<div class="d">Consigner les activités que vous avez réalisées dans la '
+         'journée.</div><div class="go">Ouvrir →</div></a>',
          '</div>', '</div></body></html>']
     return "".join(h)
 

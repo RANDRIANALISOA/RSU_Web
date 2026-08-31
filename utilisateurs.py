@@ -18,7 +18,7 @@ SQLite en local, PostgreSQL si RSU_DB_URL). Champs :
     actif                 INT     1 = peut se connecter, 0 = désactivé
     cree_le               TEXT    horodatage ISO
 
-Les communes d'un Superviseur (1 à 5) sont dans une table de LIAISON (une commune
+Les communes d'un Superviseur (1 à 7) sont dans une table de LIAISON (une commune
 ne pouvant pas être une clé étrangère si on en met plusieurs dans une colonne) :
 
     superviseur_commune(login -> utilisateurs.login,  code_commune -> commune.code_commune)
@@ -32,7 +32,7 @@ Règle d'affectation selon la responsabilité (validée à l'ajout) :
     Admin / Coordonnateur -> district = NULL (toute la zone),  commune = NULL (toutes)
     Expert survey         -> district = un district,           commune = NULL (toutes
     Traitement                                                  les communes du district)
-    Superviseur Technique -> district = un district,           commune = 1 à 5 communes
+    Superviseur Technique -> district = un district,           commune = 1 à 7 communes
                                                                 de ce district (liste)
 
 SÉCURITÉ : le mot de passe n'est JAMAIS stocké ni journalisé en clair. Seul un
@@ -90,14 +90,14 @@ _MIGRATION_CODE = {
 _ROLES_ZONE_ENTIERE = ("Admin", "Coordonnateur Nationale")            # tous districts
 _ROLES_MULTI_DISTRICT = ("Coordonnateur régionale", "Comités Techniques")  # 1 à 5 districts
 _ROLES_UN_DISTRICT = ("Traitement", "Logistique District", "Expert survey")  # 1 district
-_ROLES_DISTRICT_COMMUNES = ("Superviseur Technique", "Logistique Inter-Communale")  # district + 1 à 5 communes
+_ROLES_DISTRICT_COMMUNES = ("Superviseur Technique", "Logistique Inter-Communale")  # district + 1 à 7 communes
 # Rôles « Responsable Logistique et Financier » : espace dédié (logistique.py),
 # PAS d'accès au tableau de bord des données. L'affectation reste gérée par les
 # groupes ci-dessus (Logistique District = 1 district ; Logistique Inter-Communale =
-# 1 district + 1 à 5 communes).
+# 1 district + 1 à 7 communes).
 _ROLES_LOGISTIQUE = ("Logistique District", "Logistique Inter-Communale")
 
-MAX_COMMUNES_SUPERVISEUR = 5     # communes d'un rôle « district + communes »
+MAX_COMMUNES_SUPERVISEUR = 7     # communes d'un rôle « district + communes »
 MAX_DISTRICTS = 5                # districts d'un rôle « multi-district »
 
 # Compte d'amorçage : créé UNIQUEMENT si la table est vide, pour ne pas se retrouver
@@ -143,15 +143,18 @@ _DDL_RESPONSABILITE = (
     '"code_responsable" BIGINT PRIMARY KEY, "libelle_responsable" TEXT NOT NULL)')
 # Schéma cible. `code_responsable` -> responsabilite ; district_affectation -> district.
 # telephone / cin / email : coordonnées de l'utilisateur, facultatives (NULL possible).
+# numero_orange_float : numéro Orange (Orange Money) servant au « Float » de l'équipe
+# technique — facultatif (NULL possible), validé comme un téléphone (8-15 chiffres).
 _COLS_UTILISATEURS = (
     '"login" TEXT PRIMARY KEY, "nom_prenom" TEXT NOT NULL, '
     '"code_responsable" BIGINT NOT NULL REFERENCES "responsabilite" ("code_responsable"), '
     '"mot_de_passe" TEXT NOT NULL, '
     '"telephone" TEXT, "cin" TEXT, "email" TEXT, '
+    '"numero_orange_float" TEXT, "sexe" TEXT, '
     '"district_affectation" BIGINT REFERENCES "district" ("code_district"), '
     '"actif" INTEGER NOT NULL DEFAULT 1, "cree_le" TEXT NOT NULL')
 _COLS_CIBLE = {"login", "nom_prenom", "code_responsable", "mot_de_passe",
-               "telephone", "cin", "email",
+               "telephone", "cin", "email", "numero_orange_float", "sexe",
                "district_affectation", "actif", "cree_le"}
 # Table de liaison : les communes (FK) d'un rôle « district + communes ».
 _DDL_LIAISON = (
@@ -269,12 +272,13 @@ def _reconstruire(conn) -> None:
             code = _MIGRATION_CODE.get(o.get("responsabilite"), 1)   # défaut Admin
         cur.execute(
             'INSERT INTO "utilisateurs" ("login","nom_prenom","code_responsable",'
-            '"mot_de_passe","telephone","cin","email",'
+            '"mot_de_passe","telephone","cin","email","numero_orange_float","sexe",'
             '"district_affectation","actif","cree_le") '
-            f'VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})',
+            f'VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})',
             (o.get("login"), o.get("nom_prenom"), code,
              o.get("mot_de_passe"), o.get("telephone"), o.get("cin"),
-             o.get("email"), _to_int(o.get("district_affectation")),
+             o.get("email"), o.get("numero_orange_float"), o.get("sexe"),
+             _to_int(o.get("district_affectation")),
              o.get("actif", 1), o.get("cree_le")))
         # ancienne colonne comma-séparée -> table de liaison
         for cc in _normaliser_communes(o.get("commune_affectation")):
@@ -352,21 +356,31 @@ def _normaliser_communes(commune) -> list:
     return out
 
 
-def valider_coordonnees(telephone, cin, email):
-    """Normalise et valide les coordonnées facultatives (téléphone, CIN, e-mail).
+def _valider_tel(valeur, quoi):
+    """Normalise/valide un numéro de type téléphone (facultatif). None si vide.
+    Chiffres, espaces, '+', '-', '.' et '()' tolérés ; 8 à 15 chiffres."""
+    v = (valeur or "").strip() or None
+    if v is not None:
+        chiffres = "".join(c for c in v if c.isdigit())
+        if not (8 <= len(chiffres) <= 15) or any(
+                c not in "0123456789 +-.()" for c in v):
+            raise ValueError(f"{quoi} invalide : {valeur}.")
+    return v
 
-    Renvoie (telephone|None, cin|None, email|None). Chaque champ vide -> None.
-    - téléphone : chiffres, espaces, '+', '-', '.' et '()' tolérés ; 8 à 15 chiffres.
+
+def valider_coordonnees(telephone, cin, email, numero_orange_float=None):
+    """Normalise et valide les coordonnées facultatives.
+
+    Renvoie (telephone|None, cin|None, email|None, numero_orange_float|None).
+    Chaque champ vide -> None.
+    - téléphone / numero_orange_float : chiffres, espaces, '+', '-', '.' et '()'
+      tolérés ; 8 à 15 chiffres (le n° Orange sert au « Float » Orange Money).
     - CIN       : Carte d'Identité Nationale malgache = exactement 12 chiffres
                   (les espaces de saisie sont retirés).
     - e-mail    : format simple « x@y.z ».
     Lève ValueError si un champ fourni est manifestement invalide."""
-    tel = (telephone or "").strip() or None
-    if tel is not None:
-        chiffres = "".join(c for c in tel if c.isdigit())
-        if not (8 <= len(chiffres) <= 15) or any(
-                c not in "0123456789 +-.()" for c in tel):
-            raise ValueError(f"Numéro de téléphone invalide : {telephone}.")
+    tel = _valider_tel(telephone, "Numéro de téléphone")
+    orange = _valider_tel(numero_orange_float, "Numéro Orange (Float)")
     cin = (cin or "").strip() or None
     if cin is not None:
         cin = cin.replace(" ", "")
@@ -376,7 +390,31 @@ def valider_coordonnees(telephone, cin, email):
     if email is not None:
         if not _EMAIL_RE.match(email):
             raise ValueError(f"Adresse e-mail invalide : {email}.")
-    return (tel, cin, email)
+    return (tel, cin, email, orange)
+
+
+# Sexe : facultatif (NULL possible). Valeurs canoniques stockées « Masculin » /
+# « Féminin » ; saisies courantes (M/H/F, homme/femme…) normalisées.
+SEXES = ("Masculin", "Féminin")
+_SEXE_ALIAS = {
+    "m": "Masculin", "h": "Masculin", "masculin": "Masculin", "homme": "Masculin",
+    "male": "Masculin",
+    "f": "Féminin", "féminin": "Féminin", "feminin": "Féminin", "femme": "Féminin",
+    "female": "Féminin",
+}
+
+
+def valider_sexe(sexe):
+    """Normalise le sexe vers « Masculin »/« Féminin » (ou None si vide).
+    Lève ValueError si la valeur n'est pas reconnue."""
+    s = (sexe or "").strip()
+    if not s:
+        return None
+    val = _SEXE_ALIAS.get(s.lower())
+    if val is None:
+        raise ValueError(
+            f"Sexe invalide (« Masculin » ou « Féminin » attendu) : {sexe}.")
+    return val
 
 
 def valider_affectation(conn, responsabilite, district, communes, districts=None):
@@ -386,7 +424,7 @@ def valider_affectation(conn, responsabilite, district, communes, districts=None
     - zone entière (Admin, Coordonnateur Nationale) : (None, [], [])
     - multi-district (Coordonnateur régionale, Comités Techniques) : (None, [], [1-5])
     - un district (Traitement, Logistique District, Expert survey) : (d, [], [])
-    - district + communes (Superviseur Technique, Logistique Inter-Communale) : (d, [1-5], [])
+    - district + communes (Superviseur Technique, Logistique Inter-Communale) : (d, [1-7], [])
     Lève ValueError si l'affectation est incohérente avec le rôle."""
     d = _to_int(district)
     if responsabilite in _ROLES_ZONE_ENTIERE:
@@ -434,12 +472,13 @@ def ajouter(conn, login: str, nom_prenom: str, responsabilite: str,
             mot_de_passe: str, district_affectation=None,
             commune_affectation=None, districts_affectation=None,
             telephone=None, cin=None, email=None,
-            actif: bool = True) -> None:
+            numero_orange_float=None, sexe=None, actif: bool = True) -> None:
     """Insère un utilisateur (mot de passe haché, affectation validée selon le rôle).
     Les communes d'un rôle « district+communes » et les districts d'un rôle
     « multi-district » vont dans leur table de liaison. Lève ValueError si invalide.
     `commune_affectation`/`districts_affectation` : liste de codes, 'a,b', ou None.
-    `telephone`/`cin`/`email` : coordonnées facultatives (validées si fournies)."""
+    `telephone`/`cin`/`email` : coordonnées facultatives (validées si fournies).
+    `numero_orange_float` : n° Orange (Float) facultatif (validé si fourni)."""
     login = (login or "").strip()
     nom_prenom = (nom_prenom or "").strip()
     if not login:
@@ -453,7 +492,9 @@ def ajouter(conn, login: str, nom_prenom: str, responsabilite: str,
         raise ValueError("Le mot de passe est obligatoire.")
     if _existe(conn, login):
         raise ValueError(f"Le login « {login} » existe déjà.")
-    telephone, cin, email = valider_coordonnees(telephone, cin, email)
+    telephone, cin, email, numero_orange_float = valider_coordonnees(
+        telephone, cin, email, numero_orange_float)
+    sexe = valider_sexe(sexe)
     da, communes, districts = valider_affectation(
         conn, responsabilite, district_affectation, commune_affectation,
         districts_affectation)
@@ -461,11 +502,11 @@ def ajouter(conn, login: str, nom_prenom: str, responsabilite: str,
     cur = conn.cursor()
     cur.execute(
         'INSERT INTO "utilisateurs" ("login","nom_prenom","code_responsable",'
-        '"mot_de_passe","telephone","cin","email",'
+        '"mot_de_passe","telephone","cin","email","numero_orange_float","sexe",'
         '"district_affectation","actif","cree_le") '
-        f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
+        f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
         (login, nom_prenom, CODE_PAR_LIBELLE[responsabilite], hacher(mot_de_passe),
-         telephone, cin, email, da, 1 if actif else 0,
+         telephone, cin, email, numero_orange_float, sexe, da, 1 if actif else 0,
          datetime.datetime.now().isoformat(timespec="seconds")))
     for c in communes:
         cur.execute('INSERT INTO "superviseur_commune" ("login","code_commune") '
@@ -478,7 +519,7 @@ def ajouter(conn, login: str, nom_prenom: str, responsabilite: str,
 def modifier(conn, login: str, nom_prenom: str, responsabilite: str,
              district_affectation=None, commune_affectation=None,
              districts_affectation=None, telephone=None, cin=None, email=None,
-             mot_de_passe=None) -> None:
+             numero_orange_float=None, sexe=None, mot_de_passe=None) -> None:
     """Met à jour un utilisateur EXISTANT (le login est la clé, non modifiable).
 
     Réécrit les renseignements (nom, rôle, coordonnées, affectation). L'affectation
@@ -494,7 +535,9 @@ def modifier(conn, login: str, nom_prenom: str, responsabilite: str,
     if responsabilite not in RESPONSABILITES:
         raise ValueError(
             "Responsabilité invalide. Choix : " + ", ".join(RESPONSABILITES))
-    telephone, cin, email = valider_coordonnees(telephone, cin, email)
+    telephone, cin, email, numero_orange_float = valider_coordonnees(
+        telephone, cin, email, numero_orange_float)
+    sexe = valider_sexe(sexe)
     da, communes, districts = valider_affectation(
         conn, responsabilite, district_affectation, commune_affectation,
         districts_affectation)
@@ -502,10 +545,11 @@ def modifier(conn, login: str, nom_prenom: str, responsabilite: str,
     cur = conn.cursor()
     cur.execute(
         'UPDATE "utilisateurs" SET "nom_prenom"={p},"code_responsable"={p},'
-        '"telephone"={p},"cin"={p},"email"={p},"district_affectation"={p} '
+        '"telephone"={p},"cin"={p},"email"={p},"numero_orange_float"={p},'
+        '"sexe"={p},"district_affectation"={p} '
         'WHERE "login"={p}'.format(p=ph),
         (nom_prenom, CODE_PAR_LIBELLE[responsabilite], telephone, cin, email,
-         da, login))
+         numero_orange_float, sexe, da, login))
     if mot_de_passe:
         cur.execute(f'UPDATE "utilisateurs" SET "mot_de_passe"={ph} '
                     f'WHERE "login"={ph}', (hacher(mot_de_passe), login))
@@ -525,6 +569,28 @@ def _existe(conn, login: str) -> bool:
     cur = conn.cursor()
     cur.execute(f'SELECT 1 FROM "utilisateurs" WHERE "login"={ph}', (login,))
     return cur.fetchone() is not None
+
+
+def modifier_profil(conn, login: str, telephone=None, cin=None, email=None,
+                    numero_orange_float=None, sexe=None) -> bool:
+    """Mise à jour LIBRE-SERVICE des informations PERSONNELLES d'un compte :
+    téléphone, CIN, e-mail, n° Orange (Float), sexe UNIQUEMENT. Ne touche JAMAIS
+    au login, au rôle, à l'affectation, au nom ni au mot de passe (réservés à
+    l'Admin). Valide les champs. Renvoie True si le compte existe."""
+    login = (login or "").strip()
+    if not _existe(conn, login):
+        raise ValueError(f"Login inconnu : {login}.")
+    telephone, cin, email, numero_orange_float = valider_coordonnees(
+        telephone, cin, email, numero_orange_float)
+    sexe = valider_sexe(sexe)
+    ph = db_source._placeholder(conn)
+    cur = conn.cursor()
+    cur.execute(
+        'UPDATE "utilisateurs" SET "telephone"={p},"cin"={p},"email"={p},'
+        '"numero_orange_float"={p},"sexe"={p} WHERE "login"={p}'.format(p=ph),
+        (telephone, cin, email, numero_orange_float, sexe, login))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def changer_mot_de_passe(conn, login: str, nouveau: str) -> bool:
@@ -562,14 +628,15 @@ def lister(conn) -> list:
     cur = conn.cursor()
     cur.execute('SELECT u."login",u."nom_prenom",r."libelle_responsable",'
                 'u."district_affectation",u."actif",u."cree_le",u."code_responsable",'
-                'u."telephone",u."cin",u."email" '
+                'u."telephone",u."cin",u."email",u."numero_orange_float",u."sexe" '
                 'FROM "utilisateurs" u LEFT JOIN "responsabilite" r '
                 'ON u."code_responsable"=r."code_responsable" ORDER BY u."login"')
     comptes = [{"login": r[0], "nom_prenom": r[1],
                 "responsabilite": r[2] or LIBELLE_PAR_CODE.get(r[6], ""),
                 "district_affectation": r[3], "actif": bool(r[4]),
                 "cree_le": r[5], "code_responsable": r[6],
-                "telephone": r[7], "cin": r[8], "email": r[9]}
+                "telephone": r[7], "cin": r[8], "email": r[9],
+                "numero_orange_float": r[10], "sexe": r[11]}
                for r in cur.fetchall()]
     for u in comptes:
         u["communes_affectation"] = _communes_de(conn, u["login"])
@@ -584,6 +651,53 @@ def obtenir(conn, login: str):
         if u["login"] == (login or "").strip():
             return u
     return None
+
+
+# Rôles composant « l'équipe technique » d'un district (ordre d'affichage). Ce
+# sont des COMPTES affectés au district (pas les agents de terrain) : d'abord le
+# Coordonnateur régional qui le couvre, puis le Traitement, l'Expert survey, et
+# enfin les Superviseurs Techniques (présentés par axe de supervision, cf.
+# serveur_app.page_equipe_technique).
+ROLES_EQUIPE_TECHNIQUE = ("Coordonnateur régionale", "Traitement",
+                          "Expert survey", "Superviseur Technique")
+
+
+def equipe_technique_district(conn, code_district):
+    """Personnel (comptes) affecté à un district, groupé par rôle.
+
+    Renvoie une liste ordonnée [(role, [comptes...]), ...] pour les rôles de
+    ROLES_EQUIPE_TECHNIQUE ayant au moins une personne rattachée au district —
+    soit par `district_affectation` (rôles mono-district), soit par la liaison
+    `responsable_district` (rôles multi-district, ex. Coordonnateur régionale).
+    Chaque compte a la forme de `lister()` (nom, login, contact, communes)."""
+    try:
+        code = int(code_district)
+    except (TypeError, ValueError):
+        return []
+    par_role = {r: [] for r in ROLES_EQUIPE_TECHNIQUE}
+    for u in lister(conn):
+        role = u.get("responsabilite")
+        if role not in par_role:
+            continue
+        da = u.get("district_affectation")
+        da = int(da) if da is not None and str(da).isdigit() else None
+        dists = {int(d) for d in (u.get("districts_affectation") or [])
+                 if str(d).isdigit()}
+        if da == code or code in dists:
+            par_role[role].append(u)
+    for r in par_role:
+        par_role[r].sort(key=lambda x: (x.get("nom_prenom") or x.get("login") or ""))
+    # Noms des communes d'affectation des Superviseurs Techniques : sert à nommer
+    # leur « axe de supervision » (regroupement par zone dans la fiche). On résout
+    # une seule fois chaque code -> libellé.
+    noms_communes = {}
+    for u in par_role.get("Superviseur Technique", []):
+        for cc in (u.get("communes_affectation") or []):
+            if cc not in noms_communes:
+                noms_communes[cc] = zones.libelle_commune(conn, cc) or str(cc)
+        u["communes_noms"] = [noms_communes[cc]
+                              for cc in (u.get("communes_affectation") or [])]
+    return [(r, par_role[r]) for r in ROLES_EQUIPE_TECHNIQUE if par_role[r]]
 
 
 def authentifier(conn, login: str, mot_de_passe: str):
@@ -755,12 +869,14 @@ def _saisir_affectation(conn, responsabilite):
 
 
 def _saisir_coordonnees():
-    """Saisit téléphone / CIN / e-mail (tous facultatifs, revalidés à chaque essai)."""
+    """Saisit téléphone / CIN / e-mail / n° Orange (Float) — tous facultatifs,
+    revalidés à chaque essai."""
     tel = input("Téléphone (facultatif) : ").strip()
     cin = input("CIN — 12 chiffres (facultatif) : ").strip()
     email = input("Adresse e-mail (facultatif) : ").strip()
-    valider_coordonnees(tel, cin, email)     # lève ValueError si invalide
-    return (tel or None, cin or None, email or None)
+    orange = input("Numéro Orange - Float (facultatif) : ").strip()
+    valider_coordonnees(tel, cin, email, orange)   # lève ValueError si invalide
+    return (tel or None, cin or None, email or None, orange or None)
 
 
 def _saisir_mot_de_passe() -> str:
@@ -794,13 +910,14 @@ def main() -> int:
             login = input("Login : ").strip()
             nom = input("Nom et prénom : ").strip()
             resp = _choisir_responsabilite()
-            tel, cin, email = _saisir_coordonnees()
+            tel, cin, email, orange = _saisir_coordonnees()
             district, commune, districts = _saisir_affectation(conn, resp)
             mdp = _saisir_mot_de_passe()
             ajouter(conn, login, nom, resp, mdp,
                     district_affectation=district, commune_affectation=commune,
                     districts_affectation=districts,
-                    telephone=tel, cin=cin, email=email)
+                    telephone=tel, cin=cin, email=email,
+                    numero_orange_float=orange)
             conn.commit()
             print(f"Utilisateur « {login} » ajouté ({resp} — "
                   f"{affectation_texte(conn, district, commune, districts)}).")

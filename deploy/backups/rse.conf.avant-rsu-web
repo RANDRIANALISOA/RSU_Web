@@ -1,0 +1,38 @@
+<VirtualHost *:80>
+    ServerName rse.instat.mg
+    # Activer les modules proxy
+    ProxyRequests Off
+    ProxyPreserveHost On
+    # ==================== TRAITEMENT RSU (priorité) ====================
+    ProxyPass /traitement-rsu/ http://127.0.0.1:5000/traitement-rsu/
+    ProxyPassReverse /traitement-rsu/ http://127.0.0.1:5000/traitement-rsu/
+    # Ajouter le header pour le préfixe (utiliser RequestHeader)
+    RequestHeader set X-Forwarded-Prefix "/traitement-rsu"
+    RequestHeader set X-Forwarded-Proto "http"
+    RequestHeader set X-Forwarded-Host "rse.instat.mg"
+    # Redirection sans slash
+    RewriteEngine On
+    RewriteRule ^/traitement-rsu$ /traitement-rsu/ [R=301,L]
+
+    # ==================== EXPLOITATION BASE VAD (RSU Vague 2) ====================
+    ProxyPass /rsu-vague2/ http://127.0.0.1:5001/
+    ProxyPassReverse /rsu-vague2/ http://127.0.0.1:5001/
+    RewriteRule ^/rsu-vague2$ /rsu-vague2/ [R=301,L]
+
+    # ==================== RLF-RSU V2 (Flask / gunicorn) ====================
+    ProxyPass /rlf-rsu-v2/ http://127.0.0.1:5002/
+    ProxyPassReverse /rlf-rsu-v2/ http://127.0.0.1:5002/
+    RewriteRule ^/rlf-rsu-v2$ /rlf-rsu-v2/ [R=301,L]
+
+    # ==================== SURVEY SOLUTIONS ====================
+    Alias /todo /var/www/html/todo
+    <Directory /var/www/html/todo>
+        Require all granted
+    </Directory>
+    ProxyPass /todo !
+    ProxyPass / http://127.0.0.1:8080/
+    ProxyPassReverse / http://127.0.0.1:8080/
+    # Logs
+    ErrorLog ${APACHE_LOG_DIR}/rse_error.log
+    CustomLog ${APACHE_LOG_DIR}/rse_access.log combined
+</VirtualHost>

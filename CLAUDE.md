@@ -51,7 +51,16 @@ rapport interactif.
 > télécharge un **classeur Excel** (route `/export/rapport.xlsx`, module `export_rapport.py`) :
 > feuille **Rapport global** (couverture + qualité par commune/fokontany), feuille
 > **Dénombrement par agent-jour** (un tableau par chef d'équipe), feuille **BaseDenParAgent**
-> (table plate agent×fokontany×date). Restent surtout :
+> (table plate agent×fokontany×date).
+> **COLLABORATION (maj 2026-08-31)** : au-delà du dashboard, l'app porte désormais une
+> couche de **suivi d'équipe** (voir la section datée 2026-08-31) — **Journal de bord**
+> (`journal.py`, `/journal` : l'équipe technique écrit ses activités du jour avec rappel
+> par bulle + historique complet ; les coordonnateurs LISENT, filtres district/fonction/
+> axe/nom/date), **Consignes / instructions** (`consignes.py`, `/consignes` : les deux
+> coordonnateurs envoient des consignes ciblées par rôles+districts, reçues via une bulle,
+> modifiables/supprimables par l'auteur ; lecture filtrable), et **« Mon profil »**
+> (`/profil`, tous rôles : chacun édite ses CIN/téléphone/N° Orange Float/e-mail/**sexe**,
+> le reste réservé à l'Admin). Restent surtout :
 > câbler l'allègement des **autres sections** (§6 étape 3), le **suivi VAD** et les
 > **outils transactionnels logistiques** quand leurs données existeront, **changer le
 > compte d'amorçage**, **PostgreSQL** effectif (`RSU_DB_URL`), **FastAPI**, **HTTPS**,
@@ -206,8 +215,12 @@ RSU_Web/
 │                          Regles par role (cf. §6 etape 4). modifier() met a jour un
 │                          compte (login = cle, non modifiable ; mdp inchange si vide ;
 │                          affectation revalidee + liaisons reconstruites) ; obtenir()
-│                          pour le pre-remplissage. CLI : init/add/list/
-│                          passwd/actif/del. /login s'appuie dessus (authentifier()).
+│                          pour le pre-remplissage. SEXE : colonne `sexe` facultative
+│                          (« Masculin »/« Feminin », SEXES + valider_sexe) migree auto.
+│                          modifier_profil(login, tel/cin/email/float/sexe) = MAJ
+│                          LIBRE-SERVICE (route /profil) : ces 5 champs SEULEMENT, login
+│                          pris de la session ; rien d'autre (role/affectation = Admin).
+│                          CLI : init/add/list/passwd/actif/del. /login -> authentifier().
 ├── journal.py          <- AUDIT : journal_connexion (login, role, duree),          [FONCTIONNEL]
 │                          tentative_connexion (echecs) et journal_transcription
 │                          = 1 ligne par EVENEMENT d'ingestion (evenement =
@@ -217,6 +230,24 @@ RSU_Web/
 │                          idempotente (ADD COLUMN evenement/statut/detail). Affiche
 │                          sur la page Expert (les siens) ET le tableau de bord Admin.
 │                          fmt_quand() = JJ/MM/AAAA HH:MM. Rempli par serveur_app.
+│                          JOURNAL DE BORD (activites quotidiennes) : table
+│                          journal_activite(id, login, nom_prenom, fonction, zone,
+│                          code_district, date_jour, journal, cree_le). ecrire_activite
+│                          (equipe technique, plusieurs entrees/jour), a_ecrit_le
+│                          (bulle de rappel), mes_activites (page ecriture), activites
+│                          (LECTURE bornee au perimetre + filtres district/fonction/
+│                          zone/nom/date), options_lecture (valeurs distinctes pour
+│                          les listes ; le filtre zone/axe est DEPENDANT district+role).
+│                          Route /journal (serveur_app), cf. section datee 2026-08-31.
+├── consignes.py        <- CONSIGNES / INSTRUCTIONS des Coordonnateurs.          [FONCTIONNEL]
+│                          Tables consigne(id, auteur_*, roles_cibles, districts_cibles,
+│                          titre, message, cree_le) et consigne_lecture(consigne_id,
+│                          login, lu_le). envoyer() ; _concerne(role,districts,...) =
+│                          ciblage (roles_cibles='TOUS'|libelles sep '|' ;
+│                          districts_cibles='TOUS'|codes sep ',') ; pour_utilisateur/
+│                          non_lues/marquer_toutes_lues (destinataires) ; envoyees_par
+│                          (emetteur). Routes /consignes[/nouvelle], bulle en HAUT-
+│                          GAUCHE. Cf. section datee 2026-08-31.
 ├── admin.py            <- ESPACE ADMIN (reserve role Admin) : tableau de bord,      [FONCTIONNEL]
 │                          journal, gestion utilisateurs = 3 PAGES (liste
 │                          /admin/utilisateurs avec colonne Contact + bouton MODIFIER ;
@@ -737,7 +768,11 @@ et les gros dossiers `DATA/`, `Cartographie/`, `LimitesFokontany/`. Ils appartie
 - **Comptes : coordonnées** (2026-08-16) — `utilisateurs` a `telephone` / `cin` / `email`
   (facultatifs, validés par `valider_coordonnees` : CIN=12 chiffres, e-mail simple),
   migration auto par reconstruction ; affichés (colonne Contact liste + export CSV), saisis
-  au formulaire d'ajout et à l'**import Excel**.
+  au formulaire d'ajout et à l'**import Excel**. **+ `numero_orange_float`** (Float) et
+  **`sexe`** (« Masculin »/« Féminin ») ajoutés de même. **« Mon profil »** (`/rsu/profil`,
+  tous rôles, lien bandeau) : chaque utilisateur édite en **libre-service** ses CIN,
+  téléphone, N° Orange (Float), e-mail et sexe UNIQUEMENT (`modifier_profil`) ; le reste
+  (login, nom, rôle, affectation) reste **réservé à l'Admin**. Voir section datée 2026-08-31.
 - **Espace Admin** (`/rsu/admin`) : journal connexion/durée + tentatives +
   **transcriptions récentes** ; gestion utilisateurs en **3 pages** (liste avec colonne
   Contact + bouton **Modifier** ; ajout + import Excel ; **modification par formulaire
@@ -757,6 +792,20 @@ et les gros dossiers `DATA/`, `Cartographie/`, `LimitesFokontany/`. Ils appartie
   bord (`/choix`) OU **remplir la base Chef d'Équipe / Agent** (`/traitement/equipes`) =
   téléversement de **2 fichiers Excel** (CE puis Agents) → transcription **upsert**
   (`equipes.transcrire`, validation FK login_ce) ; modèles Excel fournis.
+- **Journal de bord** (`/rsu/journal`, `journal.py`) — voir la section datée
+  **2026-08-31** pour le détail : **ÉCRITURE** quotidienne par l'équipe technique (tous
+  rôles sauf les 2 coordonnateurs et Admin ; plusieurs entrées/jour ; **bulle de rappel**
+  si rien écrit le jour) ; **LECTURE** par les coordonnateurs National/Régional + Admin
+  (bornée au périmètre ; **filtres** District cascade/restreint, Fonction, Axe/Zone
+  dépendant — Superviseur/Logistique Inter-Communale au sein d'un district —, Nom, Date).
+- **Consignes / instructions** (`consignes.py`, `/rsu/consignes[/nouvelle]`) — voir la
+  section datée **2026-08-31** : les Coordonnateurs (National/Régional) envoient des
+  consignes ciblées par **rôles** (ou tout le monde) et **districts** (ou tous ; Régional
+  borné à ses districts) ; les destinataires les reçoivent via une **bulle** (haut-gauche)
+  ouvrant `/consignes` (marquées lues). Accès : **carte** sur le menu Coordonnateur +
+  **lien « Consignes »** au bandeau (tous). Tables `consigne` / `consigne_lecture`.
+  Accès par le **bandeau** (tous) + **carte « Journal »** sur chaque page de choix.
+  Table `journal_activite`.
 - **Chefs d'Équipe / Agents liés au dénombrement** (`equipes.py` + `db_source.FK_AGENT`) :
   code agent `interview__diagnostics.responsible` = **FK** vers `agent(login_ae)`
   (déclarative ; migration `assurer_fk_diagnostics`) ; `synchroniser_agents` **auto-crée**
@@ -911,3 +960,434 @@ et les gros dossiers `DATA/`, `Cartographie/`, `LimitesFokontany/`. Ils appartie
   district sinon refus) → formulaire plus simple (1 cascade + 5 listes de communes).
 - **Un rôle sans dashboard = espace dédié + garde** : comme l'Expert (`/transcription`),
   les Logistiques ont `/logistique` ; un garde par groupe de rôles redirige hors zone.
+
+---
+
+## Déploiement en ligne (journal 2026-08-28)
+
+Mise en ligne de l'application sur le serveur `rse.instat.mg` (Ubuntu 24, Apache),
+accessible sous **`https://rse.instat.mg/rsu-web/`**, à côté des autres applications
+déjà hébergées. **État : EN LIGNE** ✅ — service systemd `rsu-web` *active* + *enabled*
+(redémarrage auto + au boot), Apache proxifie `/rsu-web/` sur `http` et `https`
+(HTTP 200 vérifié). Accessible depuis n'importe quel appareil avec un navigateur, sans
+rien installer côté visiteur.
+
+### Ce que nous avons fait
+
+- **Code sur GitHub** : dépôt `https://github.com/RANDRIANALISOA/RSU_Web.git` (public).
+  `.gitignore` créé AVANT le commit final pour exclure `venv/`, `__pycache__/`, `*.sqlite`,
+  `*.db`, `*.dta`, `uploads/`, `instance/`, `*.log`, `.env`. Historique réinitialisé
+  (suppression de `.git` + re-init) car un premier commit contenait déjà la base de 102 Mo.
+- **Clone sur le serveur** dans `/home/rse/rsu-web` (et non `/var/www`, pour éviter sudo
+  sur les fichiers).
+- **Environnement** : venv Python 3.12, `pip install openpyxl` (SEULE dépendance externe
+  du projet ; le reste est la bibliothèque standard). `gdown` installé pour le transfert.
+- **Base de données** : `rsu_local.sqlite` (103 Mo, 22 tables ; `den_menage` 4961,
+  `segment_roster` 303691, `interview__diagnostics` 4961 ; comptes réels dont l'admin
+  `randrianalisoa`) transférée depuis le PC via **Google Drive** puis téléchargée avec
+  `gdown` — le SSH (port 22) est bloqué depuis Internet et le PC n'est pas sur le LAN.
+- **Test local OK** : `RSU_PREFIXE=/rsu-web python serveur_app.py` → `127.0.0.1:8000`,
+  `/rsu-web/login` répond **HTTP 200**.
+- **Reverse-proxy Apache** : bloc `ProxyPass /rsu-web/ http://127.0.0.1:8000/rsu-web/`
+  (préfixe CONSERVÉ) ajouté dans les DEUX vhosts (`rse.conf` :80 et
+  `rse.instat.mg.conf` :443), **avant** l'attrape-tout Survey Solutions. Sauvegardes dans
+  `deploy/backups/`.
+- **Fichiers de déploiement** créés : `deploy/rsu-web.service` (systemd) et
+  `deploy/installer.sh` (installe le service + teste la syntaxe Apache AVANT reload).
+
+Installation finale faite le 2026-08-28 : `sudo bash deploy/installer.sh` (lancé par
+l'utilisateur sur le serveur) → service systemd installé, app démarrée, Apache rechargé.
+Piège résolu : une instance de test tenait le port 8000 → conflit avec le service systemd ;
+après arrêt de l'instance de test, systemd a repris le port et l'app est stable.
+
+### Ce qui reste à faire
+
+- **Vrai certificat HTTPS** : remplacer le certificat auto-signé `snakeoil` (avertissement
+  « non sécurisé ») par Let's Encrypt (`certbot`) ou Cloudflare. *(nécessite sudo)*
+- **Sauvegarder les modifications de code sur GitHub** : les changements faits directement
+  sur le serveur (voir « Mises à jour ultérieures ») ne sont PAS encore poussés → `git
+  commit` + `git push` depuis `/home/rse/rsu-web`, puis `git pull` sur le PC pour éviter la
+  divergence.
+- **(Optionnel) PostgreSQL** : PG 16 est déjà installé sur l'hôte (`127.0.0.1:5432`, distinct
+  de celui de Survey Solutions en Docker). Basculer via `RSU_DB_URL` + `pip install
+  "psycopg[binary]"` si besoin de robustesse/concurrence.
+- **Rendre `PORT` configurable** par variable d'environnement (codé en dur à 8000,
+  `serveur_app.py:54`).
+- **Sécurité** : changer le mot de passe sudo de `rse` (il a été exposé en conversation).
+
+### Mises à jour ultérieures (2026-08-28)
+
+- **Suppression du choix de « limites » sur la page de sélection** (demande utilisateur) :
+  retiré le `<fieldset>` « Limites administratives » (OCHA / générer / dossier), le JS
+  associé (`zoneDossier`/`champChemin`, qui aurait planté et cassé les listes déroulantes),
+  la ligne « Limites » du récapitulatif (`page_suivi`) et la variable `libelle_limites`.
+  Étapes renumérotées (`n_sui` : le « Type de suivi » remonte d'un cran ; `n_lim` supprimé).
+  Côté serveur AUCUN changement nécessaire : `champs.get("limites", ["ocha"])` retombe déjà
+  sur **OCHA** en l'absence du champ, et les **limites corrigées des 4 districts** restent
+  injectées automatiquement (`limites_db.contours_pour`, indépendant du choix).
+- **Robustesse `SO_REUSEADDR`** : `serveur_app.py:main()` fixe désormais
+  `ThreadingTCPServer.allow_reuse_address = True` avant le `bind` → redémarrage immédiat
+  même si le port 8000 est en `TIME_WAIT` (fini le « Address already in use » au restart).
+- **Redémarrer sans sudo** : `kill <pid de serveur_app.py>` suffit — systemd (`Restart=always`)
+  relance le service avec le nouveau code. (Le process tourne en `rse`, donc pas besoin de sudo
+  pour le tuer ; `systemctl restart`, lui, exigerait sudo.)
+
+### Mises à jour ultérieures (2026-08-29)
+
+- **Chaque utilisateur peut changer SON mot de passe** (self-service, tous les rôles) :
+  nouvelle page `/motdepasse` (GET formulaire + POST `_traiter_motdepasse` dans
+  `serveur_app.py`), accessible depuis un lien **« Mot de passe »** ajouté au **bandeau
+  utilisateur** (présent sur chaque page connectée). La route GET est placée **AVANT** les
+  gardes de rôle (Expert→/transcription, Logistique→/logistique) pour rester ouverte à tous.
+  Le handler prend le **login en session** (jamais du formulaire), **vérifie l'ancien mot de
+  passe** (`utilisateurs.authentifier`), applique une **politique minimale** (`MDP_MIN=6`,
+  confirmation identique, différent de l'actuel), puis `utilisateurs.changer_mot_de_passe`.
+  La session en cours reste valide ; le nouveau mot de passe est demandé à la prochaine
+  connexion. Réutilise l'existant (`authentifier` + `changer_mot_de_passe`), pas de nouvelle
+  fonction dans `utilisateurs.py`. Testé sur une **copie** de la base (jamais la vraie).
+  Nécessite un redémarrage du service pour être servi (voir « Redémarrer sans sudo »).
+
+- **Coordonnateur Nationale — 3ᵉ choix « Équipe technique »** sur la page de sélection
+  (en plus de Dénombrement / Visite à domicile). Réservé à ce rôle (radio `value="equipe"`
+  injecté dans `page_selection` seulement si `responsabilite=="Coordonnateur Nationale"` ;
+  validé côté serveur dans `_traiter_selection`, `suivis_ok` étendu à `equipe` pour ce seul
+  rôle). En le choisissant pour un district, `/suivi` affiche `page_equipe_technique` = la
+  fiche de **l'encadrement (comptes) affecté au district** — PAS les agents de terrain —
+  groupé par rôle : **Coordonnateur régionale, Superviseur Technique, Traitement, Expert
+  survey** (constante `utilisateurs.ROLES_EQUIPE_TECHNIQUE`). Données via
+  `utilisateurs.equipe_technique_district(conn, code)` : filtre `lister()` sur
+  `district_affectation==code` OU `code ∈ responsable_district` (multi-district). Chaque
+  carte montre nom + les **contacts Téléphone / N° Orange (Float) / E-mail** (le **CIN
+  n'y figure PAS** — donnée d'identité, retirée le 2026-08-31), communes (pour un
+  Superviseur). Testé
+  (lecture seule) : district 1101 → Coord régional + 2 Traitement + 1 Expert survey.
+  Redémarrage requis pour être servi.
+
+- **Export Excel du dénombrement — 4ᵉ feuille « segment_multiple »** (`export_rapport.py`) :
+  rapport « Segments multiples » identique à la page du tableau de bord. Un code de
+  segment est MULTIPLE quand il se répète plus d'une fois dans un même fokontany, compté
+  sur les lignes DEN_MENAGE (`rapport_core._construire_segments_den` → SEGMENTS_DEN), clé
+  = (fokontany, code). Colonnes : Fokontany / Segment / Nombre de segments dénombrés /
+  Agents concernés (noms via `equipes.agents_et_chefs`, sinon code), triées par libellé
+  fokontany puis nombre décroissant. `_menages_scope` renommé `_donnees_scope` (renvoie
+  désormais `(menages, segments_den)`). Respecte le périmètre (district entier OU communes
+  d'un superviseur). Vérifié : district 4405 MAMPIKONY → **30 segments multiples / 18
+  fokontany** (= chiffre de contrôle du gabarit). Redémarrage requis pour être servi.
+
+- **Manuel d'utilisation intégré, ADAPTÉ AU RÔLE** (`manuel.py`, `manuel_ui.py`,
+  `manuel_roles.py`) : lien **« Manuel »** ajouté au bandeau (présent sur chaque page,
+  tous rôles), route `/manuel` (GET) placée AVANT les gardes de rôle comme `/motdepasse`.
+  `manuel.page_manuel(role)` assemble une page avec sommaire + sections. Contenu SPÉCIFIQUE
+  par poste (`manuel_roles.sections_role`) : Traitement (dashboard + base CE/Agents avec
+  **maquettes Excel** `login_ce`/`login_ae`, + préchargement avec modes), Expert survey
+  (dossier des 3 `.dta` à téléverser, **arborescence** illustrée, transcription
+  incrémentale), Superviseur Technique (dashboard borné à ses communes), Coordonnateur
+  Nationale (sélection libre + Équipe technique), Coordonnateur régionale / Comités
+  Techniques (multi-district), Logistique (espace guide), Admin (gestion comptes) ; plus
+  des sections communes (connexion, bandeau, mot de passe, sécurité, aide). Illustrations
+  en **HTML/CSS** (schémas de flux, maquettes tableur, arborescence, maquette dashboard) —
+  pas de captures réelles. Séparation : `manuel_ui.py` = briques de rendu + CSS + illus ;
+  `manuel_roles.py` = contenu par rôle ; `manuel.py` = sections communes + assemblage
+  (import de `manuel_ui`, pas d'import circulaire). Testé : rendu OK pour les 9 rôles +
+  cas inconnu. Redémarrage requis pour être servi.
+  - **Version imprimable / PDF** : bouton « Imprimer / Enregistrer en PDF »
+    (`window.print()`) + feuille de style `@media print` (masque sommaire/boutons,
+    `break-inside:avoid` par section). Pas de génération PDF serveur — impression
+    navigateur (aucune dépendance ajoutée).
+  - **Vraies captures d'écran (facultatives)** : `manuel_ui.capture(nom, legende,
+    remplacement)` embarque en data-URI un fichier `images/manuel/<nom>` s'il existe,
+    sinon garde l'illustration (ou rien). Emplacements câblés : login, bandeau,
+    motdepasse, selection, traitement_accueil/equipes, prechargement,
+    transcription_accueil/denombrement, logistique_accueil (voir
+    `images/manuel/README.txt`). ⚠️ CONFIDENTIALITÉ : PAS de capture du tableau de
+    bord / exports / journal Admin dans le manuel partagé (données nominatives) — ces
+    écrans restent des maquettes schématiques. Aucun navigateur headless dispo dans
+    l'environnement (chromium/wkhtml absents) + le navigateur intégré bloque localhost
+    -> captures fournies par l'utilisateur, déposées dans `images/manuel/`.
+
+### Mises à jour ultérieures (2026-08-30)
+
+- **Fiche « Équipe technique » — nouvel ordre + Superviseurs par axe** (`serveur_app.
+  page_equipe_technique`, `utilisateurs.ROLES_EQUIPE_TECHNIQUE`) : l'ordre d'affichage est
+  désormais **Coordonnateur régionale → Traitement → Expert survey → Superviseur
+  Technique**. Les **Superviseurs Techniques** sont présentés **par axe de supervision**
+  (zone d'affectation = leur jeu de communes) : chaque axe est un sous-titre
+  **« Axe de supervision : Commune 1, Commune 2… »** (communes affichées **par nom** via
+  `zones.libelle_commune`, résolues dans `equipe_technique_district` -> champ
+  `communes_noms`), suivi **en retrait** de la liste des superviseurs de cette zone. Les
+  superviseurs partageant exactement le même jeu de communes sont regroupés dans le même
+  axe. La ligne « Communes » (codes bruts) de la carte-personne est retirée (l'info est
+  portée, en clair, par le sous-titre d'axe).
+
+- **Accès « Équipe technique » ÉTENDU aux rôles bornés à un district** (Traitement,
+  Superviseur Technique, Expert survey) — **chacun ne voit que SON district** : nouvelle
+  route **`/equipe`** (GET, `Handler._equipe_get`), placée **AVANT les gardes de rôle**
+  (comme `/motdepasse`/`/manuel`) pour ne pas être détournée (Expert -> /transcription).
+  Le district est résolu par **`perimetre(u)`** (source de vérité de l'accès, jamais d'une
+  saisie) ; réservée à `_ROLES_EQUIPE_DISTRICT`, sinon redirection vers `accueil_role`. Le
+  Coordonnateur Nationale continue de passer par la **sélection** (district libre). Points
+  d'entrée : **carte « Équipe technique »** sur le menu **Traitement**
+  (`equipes.page_choix_traitement`) et sur le menu **Expert survey**
+  (`transcription.page_choix_transcription`), toutes deux -> `/equipe` ; pour le
+  **Superviseur Technique** (pas de menu-cartes, il passe par la sélection), le **radio
+  « Équipe technique »** de `page_selection` lui est ouvert (comme au Coord. Nationale) et
+  `suivis_ok` étendu à `equipe` -> chemin `/suivi` existant (son district est **imposé**
+  par la validation zone de `_traiter_selection`). `page_equipe_technique` prend
+  `retour_href`/`retour_label` pour un bouton de retour adapté (mon espace vs sélection).
+  Testé en HTTP réel **sur une COPIE de la base** (jamais la vraie ; ⚠️ le service systemd
+  `rsu-web` tient le port 8000 -> test sur port 8011, cf. leçon « libérer le port ») :
+  Traitement/Expert (district 1101) et Superviseur (1106) obtiennent **200** + la fiche de
+  LEUR district ; Coord. Nationale sur `/equipe` -> **303** vers `/choix`. Redémarrage du
+  service requis pour être servi.
+
+- **MENU d'opération pour Coordonnateurs + Superviseur Technique** (`serveur_app.
+  page_menu_operation`, `Handler._menu_operation_get`, `_ROLES_MENU_OPERATION` =
+  Coordonnateur Nationale / Coordonnateur régionale / Superviseur Technique) : après
+  connexion, `accueil_role` mène **chaque rôle sur SA route dédiée** (constante
+  `_MENU_CHEMINS` : **`/coordonat`**, **`/coordoreg`**, **`/suptech`**), sur le modèle de
+  `/traitement`. Ces routes (placées AVANT les gardes de rôle, chacune vérifiant que le rôle
+  courant correspond, sinon redirection vers son propre accueil) affichent un **menu de
+  cartes** : **Tableau de bord — Dénombrement**, **Tableau de bord — Visite à domicile
+  (VAD)** et **Équipe technique**. La page reprend
+  **EXACTEMENT la charte de la page Traitement** — `admin._STYLE` (fond clair `#f0f2f7`),
+  barre sombre `.bar`, cartes `equipes._CSS_CHOIX` — **sans image de fond** (l'ancienne
+  maquette à `url(/img/accueil)` + `.voile` a été retirée). `/choix` **redirige** ces rôles
+  vers leur route dédiée. L'aiguillage se fait par **`<menu>?op=den|vad|equipe`** :
+  - **Superviseur Technique** (district FIXE) va **directement** au résultat — `op=den`/`vad`
+    -> prépare `sess["selection"]` (son district, suivi=op) et redirige vers **`/suivi`**
+    (den -> vue générale ; vad -> page « pas encore disponible ») ; `op=equipe` -> `/equipe`.
+  - Le choix **VAD est CONSERVÉ** (comme demandé) : faute de données VAD, il mène à la page
+    « pas encore disponible » (`page_vad_indisponible`) ; le vrai tableau de bord VAD sera
+    branché plus tard. Carte marquée « Bientôt disponible » mais cliquable.
+  - **Coordonnateurs** (district à choisir) -> `page_selection(op=…)` : les vignettes
+    « type de suivi » sont remplacées par un **champ caché `suivi=op`** + rappel de
+    l'opération + lien **« ← Menu »** ; ils choisissent le district (cascade complète pour
+    le National, liste restreinte pour le Régional) puis POST `/suivi` mène au tableau de
+    bord ou à la fiche équipe. `suivis_ok` inclut `equipe` pour **tous** les rôles à menu
+    (Coord. régionale compris) ; sur erreur de validation, `page_selection` reçoit
+    `op=op_form` pour **conserver l'opération** (le champ caché) dans le formulaire.
+    Le district reste **borné par `perimetre(u)`** à la validation du POST (district hors
+    affectation -> 400). Les rôles multi-district **hors** menu (ex. Comités Techniques)
+    gardent la **sélection classique** (radios den/vad), `page_selection(op=None)`.
+  Testé HTTP réel **sur une COPIE** (port 8011) : login -> `/suptech` / `/coordonat` /
+  `/coordoreg` (menu, **0 réf. image de fond**, fond `#f0f2f7`, barre `.bar` + cartes `.ca`
+  comme Traitement, **3 cartes** dont VAD) ; Superviseur `?op=den`->`/suivi`->vue générale,
+  `?op=vad`->`/suivi`->« pas encore disponible », `?op=equipe`->`/equipe`,
+  `/choix`->`/suptech` ; Coord. Nationale `?op=equipe`+district 1101 -> fiche équipe,
+  `?op=den`+4405 -> dashboard 200, `?op=vad`+1101 -> « pas encore disponible », accès croisé
+  `/suptech` -> redirigé vers `/coordonat` ; Coord. régionale `?op=equipe` -> sélection,
+  district **4405 hors périmètre -> 400** avec op conservée. Redémarrage du service requis pour être servi. *(Comités Techniques laissé
+  volontairement sur l'ancien flux — non demandé ; à basculer en l'ajoutant à
+  `_ROLES_MENU_OPERATION` + `_MENU_CHEMINS`.)*
+
+### Mises à jour ultérieures (2026-08-31)
+
+- **Nouvelle coordonnée « N° Orange (Float) »** sur les comptes (`utilisateurs`) :
+  colonne **`numero_orange_float`** (TEXT, **facultative**, NULL possible), destinée
+  au numéro Orange Money servant au « Float » de l'équipe technique. Ajoutée au **schéma
+  cible** (`_COLS_UTILISATEURS`/`_COLS_CIBLE`) → migration SQLite **automatique** au
+  démarrage (`_migrer`/`_reconstruire` : reconstruit la table, **comptes conservés**).
+  **Validée comme un téléphone** (8-15 chiffres) : `valider_coordonnees` prend un 4ᵉ
+  paramètre et renvoie désormais un **4-uplet** `(tel, cin, email, orange)` (helper
+  `_valider_tel` factorisé) ; `ajouter`/`modifier` ont un paramètre
+  `numero_orange_float`. Câblé partout où passaient les coordonnées : `lister()`
+  (SELECT + dict), formulaires Admin **ajout** + **modification** (champ « N° Orange
+  (Float) »), **import Excel** + **modèle** (colonne `numero_orange_float`, facultative),
+  **export CSV** + affichage **Contact** (`_contact_html`), POST admin
+  (`serveur_app._admin_action_utilisateur`), CLI `add` (`_saisir_coordonnees`), et la
+  **fiche Équipe technique** (`page_equipe_technique` affiche le n°). Testé sur une
+  **COPIE** de la base (jamais la vraie) : migration (56 comptes conservés, colonne
+  présente), aller-retour ajout/modif/vidage, rejet d'un numéro invalide, et cycle
+  **modèle→import Excel** (colonne lue au bon rang malgré le décalage). **Redémarrage
+  du service requis** pour être servi (`kill` du process → systemd relance ;
+  cf. « Redémarrer sans sudo »).
+
+- **JOURNAL DE BORD (activités quotidiennes)** — nouvelle route unique **`/journal`**
+  (GET + POST, `journal.py` + `serveur_app.py`), placée **AVANT les gardes de rôle**
+  (comme `/motdepasse`/`/manuel`/`/equipe`) pour rester ouverte à tous les rôles
+  concernés. Deux usages selon le rôle :
+  - **ÉCRITURE** (`_ROLES_JOURNAL_ECRITURE` = toute l'équipe technique SAUF les deux
+    coordonnateurs et l'Admin : Comités Techniques, Traitement, Expert survey,
+    Superviseur Technique, Logistique District, Logistique Inter-Communale) : page
+    « Mon journal de bord » (`page_journal_ecrire`) — **Nom/Prénom, Fonction, Axe/Zone
+    pré-remplis** (jamais saisis : la zone vient de `perimetre(u)` via `_journal_zone`
+    — communes = « Axe de supervision : … », sinon « District(s) : … »), champ **Date**
+    (défaut = aujourd'hui, jamais dans le futur) + **textarea** des activités. POST =
+    `journal.ecrire_activite`. **Plusieurs entrées/jour autorisées**. La page liste
+    « Mes dernières entrées » (`journal.mes_activites`) avec un lien **« Voir tout mon
+    journal → »** vers **`/journal/historique`** (route rôles d'écriture, placée AVANT
+    les gardes ; un lecteur y est renvoyé vers `/journal`) : page dédiée qui affiche
+    **TOUTES** ses entrées (`mes_activites(limite=1000000)`) avec le **total** et un
+    **filtre par date**. Testé (COPIE) : total exact, filtre date, redirection lecteur.
+  - **LECTURE** (`_ROLES_JOURNAL_LECTURE` = Coordonnateur Nationale, Coordonnateur
+    régionale, Admin) : page « Journaux des équipes » (`page_journal_lecture`) —
+    liste **bornée au périmètre** (`journal.activites(districts=perimetre(u)[0])` :
+    **None = tout** pour National/Admin ; **set = ses districts** pour le Régional,
+    filtré par recoupement de `code_district`) + **filtre par date**.
+  - **Table** `journal_activite(id, login, nom_prenom, fonction, zone, code_district,
+    date_jour, journal, cree_le)` créée au démarrage (`journal.creer_tables`). `id` =
+    jeton Python (portable, pas d'auto-incrément) ; `code_district` = codes du
+    périmètre séparés par virgules (pour le filtrage de lecture du Régional).
+  - **Bulle de RAPPEL** (`bulle_rappel_journal`, injectée par `_html` avec le bandeau
+    sur **chaque page connectée SAUF `/journal`**) : s'affiche pour un rôle d'écriture
+    qui **n'a rien écrit aujourd'hui** (`journal.a_ecrit_le`), bas-gauche (haut-droite
+    = bandeau, bas-droite = bouton « Exporter rapport »). Disparaît dès la 1re entrée
+    du jour. Résultat **caché dans la session** (`_journal_jour`/`_journal_ck`/
+    `_journal_bulle`, re-vérif ≤ 1×/120 s) pour limiter les requêtes.
+  - **Accès** : (1) lien **« Journal »** (écriture) / **« Journaux »** (lecture) au
+    **bandeau utilisateur** (présent sur chaque page, tous rôles concernés) ; (2)
+    **carte « Journal »** (📓) ajoutée à **chaque page de choix**, au même niveau que
+    les autres choix — `page_menu_operation` (Coordonnateurs + Superviseur : libellé
+    adaptatif « Journaux des équipes » en lecture / « Mon journal de bord » en
+    écriture), `equipes.page_choix_traitement`, `transcription.page_choix_transcription`
+    et `logistique.page_accueil` (« Mon journal de bord »). *Comités Techniques* passe
+    par la sélection à radios (pas de cartes) → accès via le bandeau uniquement.
+    Testé en HTTP réel **sur une COPIE** de la base (port 8011 ; le service systemd
+    tient le 8000) : écriture Traitement (zone district, POST + succès + rappel qui
+    disparaît), Superviseur (zone = axe de communes, refus si vide), lecture National
+    (tout) / Régional (ses districts seulement — district hors périmètre non visible) ;
+    carte présente et bien libellée sur les 6 pages de choix. **Redémarrage du service
+    requis** pour être servi.
+  - **FILTRES de LECTURE (Coordonnateurs National + Régional)** : la page « Journaux
+    des équipes » a **5 filtres** combinables (GET, `journal.activites` étendu +
+    `journal.options_lecture`) : **District**, **Fonction/Poste**, **Axe/Zone de
+    supervision** (dépendant, voir ci-dessous), **Nom** (sous-chaîne insensible à la
+    casse) et **Date**. Le filtre **District** est une **cascade
+    Province→Région→District** pour le National/Admin (sans restriction —
+    `_filtre_district_html` + JS de cascade réutilisant `ARBRE_GEO` ; **pré-remplie
+    côté serveur** via `_geo_reverse` quand un district est déjà choisi, le JS ne
+    gérant que les changements) ; pour le Coordonnateur régional c'est une **liste
+    déroulante restreinte à SES districts** (un district hors périmètre passé en
+    paramètre est ignoré). **Fonction** est un `<select>` peuplé des **valeurs
+    distinctes présentes dans le périmètre** (`options_lecture` — donc, tant que
+    seuls des Superviseurs ont écrit, la liste ne contient qu'eux : c'est voulu, on
+    n'offre que des filtres qui donnent des résultats). Le filtre **Axe/Zone de
+    supervision** est **DÉPENDANT** : il ne concerne que les rôles « district +
+    communes » (`_ROLES_DISTRICT_COMMUNES` = **Superviseur Technique**, **Logistique
+    Inter-Communale**) et n'a de sens qu'au sein d'UN district → il n'est **actif que
+    si un District ET une de ces deux fonctions sont choisis** ; ses options sont
+    alors les **axes (zones) de cette fonction DANS ce district** (calculées à la
+    volée dans `_journal_get`, périmètre respecté ; libellé = zone sans le préfixe
+    « Axe de supervision : »). Sinon le `<select>` est **désactivé** avec un libellé
+    explicatif, et un texte d'astuce rappelle la marche à suivre. Le filtre district
+    recoupe le `code_district` (codes séparés par virgules) du journal. Testé sur
+    COPIE (port 8011) : National — district/fonction/nom/date + combinaisons +
+    pré-sélection cascade ; **axe** : désactivé sans district/fonction, peuplé et
+    borné au district choisi pour Superviseur ET Logistique Inter-Communale (les axes
+    d'un autre district n'apparaissent pas), désactivé pour une fonction hors
+    « district + communes » (ex. Traitement) ; Régional — dropdown restreint à
+    1101/1106, district hors périmètre ignoré, résultats toujours bornés à ses
+    districts.
+
+- **CONSIGNES / INSTRUCTIONS des Coordonnateurs** (`consignes.py`, routes
+  `/consignes` + `/consignes/nouvelle`) : un Coordonnateur (National ou régional)
+  **rédige une consigne** et choisit **qui la reçoit** (rôles) et **pour quels
+  districts** ; les destinataires la reçoivent via une **bulle d'info** ouvrable.
+  - **Émetteurs** (`_ROLES_CONSIGNE_ENVOI`) : Coordonnateur Nationale **et** régionale.
+    Le National peut viser **tous les districts** (`districts_cibles='TOUS'`) ; le
+    Régional est **borné à SES districts** (`perimetre`) — sa sélection est filtrée et
+    « Tous les districts » = **tous les SIENS** (jamais 'TOUS'), un district hors
+    périmètre soumis est écarté.
+  - **Ciblage RÔLES** : cases à cocher (« **Tout le monde** » = `roles_cibles='TOUS'`,
+    sinon une sélection de `_ROLES_CONSIGNE_CIBLES` = tous les rôles **sauf Admin**).
+  - **Ciblage DISTRICTS** : `<select multiple>` (optgroups par région, réutilisant
+    `ARBRE_GEO`, borné au périmètre de l'émetteur) + case « Tous les districts ».
+  - **Réception** (`/consignes`, **tous rôles**) : un utilisateur est destinataire si
+    `role ∈ roles_cibles` (ou TOUS) **ET** son/ses district(s) (`perimetre(u)[0]`)
+    **recoupe(nt)** `districts_cibles` (ou TOUS) — `consignes._concerne`. La page liste
+    les consignes reçues et les **marque lues** à l'ouverture. **3 filtres d'AFFICHAGE**
+    (GET, appliqués dans `_consignes_get`, sans changer le marquage-lu qui reste global) :
+    **Poste de l'émetteur** (`<select>` des deux Coordonnateurs, `_ROLES_CONSIGNE_ENVOI`),
+    **Nom de l'émetteur** (sous-chaîne insensible à la casse sur `auteur_nom`) et **Date**
+    d'émission (`cree_le[:10]`). Testé sur COPIE (port 8011) : chaque filtre + combinaisons.
+  - **Bulle** (`bulle_consignes`, injectée par `_html` comme le bandeau, **en haut à
+    gauche** — le bandeau prend le haut-droite, la bulle journal le bas-gauche) : «📣 N
+    consigne(s) à lire » si non-lues > 0 ; disparaît dès l'ouverture de `/consignes`.
+    Comptage en cache session, **throttle court (30 s)** car le déclencheur est
+    **externe** (l'émetteur), pas l'utilisateur lui-même.
+  - **Tables** : `consigne(id, auteur_login/nom/role, roles_cibles, districts_cibles,
+    titre, message, cree_le)` + `consigne_lecture(consigne_id, login, lu_le)`. Créées
+    au démarrage (`consignes.creer_tables` dans `preparer`).
+  - **Confirmation AVANT envoi/modification** : le formulaire (`#cj-form`) demande une
+    **confirmation JS** récapitulant les rôles et districts visés avant de poster (le
+    verbe s'adapte selon `EST_EDIT` : « Envoyer » / « Enregistrer les modifications »).
+  - **Suppression / rappel** : chaque consigne envoyée porte un bouton **🗑 Supprimer**
+    (POST `/consignes/supprimer`, confirmation JS) → `consignes.supprimer(id,
+    auteur_login)` retire la consigne ET ses lectures, **uniquement si le demandeur en
+    est l'AUTEUR** (un coordonnateur ne peut retirer que SES consignes). Une fois
+    supprimée, les destinataires ne la voient plus (la bulle se recalcule).
+  - **Modification** : chaque consigne envoyée porte un bouton **✏️ Modifier** →
+    **GET `/consignes/modifier?id=`** ouvre le **même formulaire pré-rempli** (titre,
+    message, cases rôles cochées / « Tout le monde », districts sélectionnés / « Tous »),
+    **POST `/consignes/modifier`** applique via `consignes.modifier(id, auteur_login, …)`
+    — **auteur uniquement** (sinon redirection, aucune écriture). La modification
+    **réinitialise les accusés de lecture** (`consigne_lecture` vidé pour cet id) : les
+    destinataires (y compris de NOUVEAUX si la cible change) **revoient la version à
+    jour** et la bulle se ré-affiche. Lecture du formulaire factorisée (`_consignes_cibles`)
+    et partagée avec l'envoi ; sur erreur de validation, le formulaire d'édition est
+    **ré-affiché sans perte de saisie** (`_edition_depuis_form`). Testé (COPIE) :
+    pré-remplissage, retargetage (l'ancien destinataire perd la consigne, le nouveau la
+    reçoit), reset des lectures, garde auteur (autre coordonnateur redirigé, aucune modif),
+    ré-affichage sur message vide.
+  - **Accès** : **carte « Consignes & instructions »** sur le menu des Coordonnateurs
+    (`page_menu_operation`, → `/consignes/nouvelle`) + **lien « Consignes »** au
+    **bandeau** (tous rôles, → `/consignes` reçues). Routes placées AVANT les gardes de
+    rôle. Testé en HTTP réel **sur une COPIE** (port 8011) : ciblage rôle+district,
+    « Tout le monde »/« Tous districts », périmètre du Régional (district hors périmètre
+    → écarté/erreur), bulle qui apparaît pour le bon destinataire et disparaît après
+    lecture, validations (message/rôle/district vides), 403 pour un non-coordonnateur ;
+    **confirmation JS présente**, **suppression** par l'auteur (bulle du destinataire
+    qui disparaît) et **refus** de suppression par un AUTRE coordonnateur (garde auteur).
+    **Redémarrage du service requis** pour être servi (crée les tables + sert les routes).
+
+- **« MON PROFIL » — libre-service (TOUS les rôles)** + **nouvelle variable `sexe`**
+  sur `utilisateurs`. Route **`/profil`** (GET + POST, placée AVANT les gardes de rôle
+  comme `/motdepasse`), lien **« Profil »** au bandeau (tous rôles).
+  - **Champs modifiables par l'utilisateur lui-même** : **CIN, téléphone, N° Orange
+    (Float), e-mail, sexe** — et RIEN d'autre. `utilisateurs.modifier_profil(login,
+    …)` ne met à jour QUE ces 5 colonnes ; le **login est pris de la SESSION** (jamais
+    du formulaire). Vérifié : un POST injectant `responsabilite`/`login`/`nom_prenom`/
+    `district_affectation` est **ignoré** (rôle/nom/affectation intacts). Le reste
+    (login, nom, rôle, zone/axe d'affectation) est affiché **en lecture seule** et
+    reste **réservé à l'Admin**.
+  - **`sexe`** : colonne TEXT **facultative** (NULL possible) ajoutée au schéma cible
+    (`_COLS_UTILISATEURS`/`_COLS_CIBLE`) → **migration SQLite automatique** au démarrage
+    (`_migrer`/`_reconstruire`, **comptes conservés** — testé : 56 comptes préservés,
+    colonne ajoutée). Valeurs canoniques **« Masculin »/« Féminin »** (`utilisateurs.
+    SEXES`), saisies M/H/F/homme/femme… normalisées par `valider_sexe`. Câblé partout
+    où passaient les coordonnées : `ajouter`/`modifier`/`lister`, **formulaires Admin**
+    ajout + modification (`<select>` sexe), **import Excel** + **modèle** (colonne
+    `sexe`, facultative), **export CSV**, affichage **Contact** (`_contact_html`),
+    et POST admin (`_admin_action_utilisateur`).
+  - Testé en HTTP réel **sur une COPIE** (port 8011) : `/profil` (champs éditables +
+    contexte lecture seule, enregistrement + succès, rejet CIN/e-mail/sexe invalides),
+    injection de champs non autorisés ignorée, Admin ajout/modif avec sexe, colonne
+    Contact + en-tête CSV `sexe`. **Redémarrage du service requis** (applique la
+    migration `sexe` + sert `/profil`).
+
+### Leçons à retenir
+
+- **Git refuse > 100 Mo** : ne jamais versionner base/données ; poser le `.gitignore` AVANT
+  le premier commit. Si un gros fichier est déjà committé, l'ajouter au `.gitignore` NE
+  suffit pas (le blob reste dans l'historique et le push est rejeté) → réécrire l'historique
+  (ici : supprimer `.git` et repartir propre, car rien n'était encore poussé).
+- **Structure ≠ contenu** : le code sait auto-créer les tables + un compte d'amorçage, mais
+  PAS les données. `preparer()` exige une base déjà remplie OU les `.dta` sources ; sinon
+  l'app **refuse de démarrer** (`no such table: den_menage`). Une base « qui se crée à
+  l'usage » a quand même besoin de ses graines.
+- **Le serveur ne peut pas aller chercher un fichier sur le PC** : SSH 22 bloqué depuis
+  Internet, PC hors du LAN `192.168.88.0/24`. Il faut un relais (cloud). `gdown` gère la
+  confirmation Drive des gros fichiers ; sa nouvelle syntaxe prend l'**ID en argument
+  positionnel** (plus de `--id` ni `--fuzzy`).
+- **Architecture du serveur** : c'est **Apache** qui sert 80/443 (nginx est en échec car
+  Apache occupe déjà les ports — ses configs sont dormantes). Chaque app tourne sur un port
+  interne `127.0.0.1` (5000 `traitement-rsu`, 5001 `rsu-vague2`, 5002 `rlf-rsu-v2`,
+  **8000 `rsu-web`**, 8080 Survey Solutions). Ajouter une app = un bloc `ProxyPass` **avant**
+  l'attrape-tout `/`.
+- **Les vhosts Apache appartiennent à `rse`** → éditables sans sudo ; seul `systemctl reload
+  apache2` (et l'install du service) exige sudo.
+- **Cette app est du `http.server` natif** (pas Flask/gunicorn) → on lance le script
+  directement sous systemd, pas via gunicorn. Elle gère nativement un préfixe d'URL via
+  `RSU_PREFIXE` ; le proxy doit **conserver** le préfixe (`/rsu-web/` → `:8000/rsu-web/`).
+- **Toujours libérer le port 8000** avant un test (voir aussi la leçon « Tests locaux »
+  plus haut) — une instance résiduelle fausse les résultats.

@@ -124,7 +124,9 @@ def importer_excel(conn, chemin_xlsx):
                 districts_affectation=val("districts", r) or None,
                 telephone=val("telephone", r) or None,
                 cin=val("cin", r) or None,
-                email=val("email", r) or None)
+                email=val("email", r) or None,
+                numero_orange_float=val("numero_orange_float", r) or None,
+                sexe=val("sexe", r) or None)
             ajoutes += 1
         except Exception as e:                      # ValueError de validation, etc.
             erreurs.append((n, str(e)))
@@ -142,17 +144,19 @@ def modele_xlsx() -> bytes:
     # Ordre des colonnes = ordre du formulaire (nom, rôle, coordonnées, identifiants,
     # affectation). L'import lit par nom d'en-tête : l'ordre est indicatif.
     ws.append(["nom_prenom", "responsabilite", "telephone", "cin", "email",
-               "login", "mot_de_passe", "district", "communes", "districts"])
+               "numero_orange_float", "sexe", "login", "mot_de_passe", "district",
+               "communes", "districts"])
     ws.append(["RAKOTO Jean", "Superviseur Technique", "0340000001", "101012345678",
-               "rakoto@example.mg", "rakoto", "MotDePasse#1", "4405",
-               "440501,440502", ""])
+               "rakoto@example.mg", "0320000010", "Masculin", "rakoto", "MotDePasse#1",
+               "4405", "440501,440502", ""])
     ws.append(["RABE Marie", "Expert survey", "0320000002", "101087654321",
-               "rabe@example.mg", "rabe", "MotDePasse#2", "4405", "", ""])
-    ws.append(["Le Coordonnateur", "Coordonnateur Nationale", "", "", "",
+               "rabe@example.mg", "0320000011", "Féminin", "rabe", "MotDePasse#2",
+               "4405", "", ""])
+    ws.append(["Le Coordonnateur", "Coordonnateur Nationale", "", "", "", "", "",
                "coordnat", "MotDePasse#3", "", "", ""])
-    ws.append(["RANDRIA Paul", "Coordonnateur régionale", "", "", "",
+    ws.append(["RANDRIA Paul", "Coordonnateur régionale", "", "", "", "", "Masculin",
                "reg", "MotDePasse#4", "", "", "3301,3302,3303"])
-    ws.append(["Log InterCommunale", "Logistique Inter-Communale", "", "", "",
+    ws.append(["Log InterCommunale", "Logistique Inter-Communale", "", "", "", "", "",
                "logc", "MotDePasse#5", "4405", "440501", ""])
     buf = io.BytesIO()
     wb.save(buf)
@@ -174,15 +178,16 @@ def export_utilisateurs_csv(conn) -> bytes:
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["login", "nom_prenom", "responsabilite", "affectation",
-                "telephone", "cin", "email", "actif", "cree_le"])
+                "telephone", "cin", "email", "numero_orange_float", "sexe",
+                "actif", "cree_le"])
     for u in utilisateurs.lister(conn):
         aff = utilisateurs.affectation_texte(conn, u["district_affectation"],
                                              u["communes_affectation"],
                                              u.get("districts_affectation"))
         w.writerow([u["login"], u["nom_prenom"], u["responsabilite"], aff,
                     u.get("telephone") or "", u.get("cin") or "",
-                    u.get("email") or "", "oui" if u["actif"] else "non",
-                    u["cree_le"]])
+                    u.get("email") or "", u.get("numero_orange_float") or "",
+                    u.get("sexe") or "", "oui" if u["actif"] else "non", u["cree_le"]])
     return buf.getvalue().encode("utf-8-sig")
 
 
@@ -350,7 +355,21 @@ def _contact_html(u) -> str:
         lignes.append("CIN " + ESC(u["cin"]))
     if u.get("email"):
         lignes.append("✉ " + ESC(u["email"]))
+    if u.get("numero_orange_float"):
+        lignes.append("Float " + ESC(u["numero_orange_float"]))
+    if u.get("sexe"):
+        lignes.append("Sexe " + ESC(u["sexe"]))
     return "<br>".join(lignes) if lignes else "—"
+
+
+def _select_sexe(valeur=None) -> str:
+    """<select name="sexe"> avec l'option courante pré-sélectionnée (— vide par défaut)."""
+    cur = (valeur or "").strip()
+    opts = ['<option value="">—</option>']
+    for s in utilisateurs.SEXES:
+        sel = ' selected' if s == cur else ''
+        opts.append(f'<option value="{s}"{sel}>{s}</option>')
+    return '<select name="sexe">' + "".join(opts) + '</select>'
 
 
 def _options_provinces(provinces) -> str:
@@ -440,14 +459,16 @@ def _cascade_row(prov_opts, dist_name=None) -> str:
 
 def _bloc_affectation(prov_opts) -> str:
     """Les 3 widgets d'affectation (montrés/masqués selon le rôle par le JS) :
-    1 district / 1 à 5 districts / 1 district + 1 à 5 communes."""
+    1 district / 1 à 5 districts / 1 district + 1 à 7 communes."""
     lignes_dist = "".join(_cascade_row(prov_opts, "district_multi") for _ in range(5))
     comm_selects = "".join(
         f'<select class="comm-cible" name="commune_multi" disabled>'
-        f'<option value="">— commune {i} —</option></select>' for i in range(1, 6))
+        f'<option value="">— commune {i} —</option></select>'
+        for i in range(1, utilisateurs.MAX_COMMUNES_SUPERVISEUR + 1))
     bloc_communes = (
         '<div id="f-communes" style="grid-column:1/-1">'
-        '<label>District puis communes — 1 à 5 (remplir au moins la 1re commune)</label>'
+        f'<label>District puis communes — 1 à {utilisateurs.MAX_COMMUNES_SUPERVISEUR} '
+        '(remplir au moins la 1re commune)</label>'
         '<div class="cc-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;'
         'gap:6px;margin-bottom:6px">'
         f'<select class="cc-prov"><option value="">— province —</option>{prov_opts}</select>'
@@ -465,7 +486,7 @@ def _bloc_affectation(prov_opts) -> str:
         + '<div id="f-districts" style="grid-column:1/-1">'
         '<label>Districts d’affectation — 1 à 5 (remplir au moins la 1re ligne)</label>'
         + lignes_dist + '</div>'
-        # 1 district + 1 à 5 communes (Superviseur / Logistique Inter-Communale)
+        # 1 district + 1 à 7 communes (Superviseur / Logistique Inter-Communale)
         + bloc_communes)
 
 
@@ -487,7 +508,7 @@ def _cascade_js(geo_json, groupes_json, presel_json="null") -> str:
         'R.addEventListener("change",function(){fill(D,GEO.districts[R.value],"— district —");});'
         '}'
         'document.querySelectorAll(".cascade-row").forEach(initRow);'
-        # Section « district + communes » : 1 cascade prov/rég/dist -> remplit les 5 communes.
+        # Section « district + communes » : 1 cascade prov/rég/dist -> remplit les listes de communes.
         'var CP=document.querySelector(".cc-prov"),CR=document.querySelector(".cc-reg"),'
         'CD=document.querySelector(".cc-dist"),COMMS=document.querySelectorAll(".comm-cible");'
         'function resetComms(){COMMS.forEach(function(s,i){fill(s,[],"— commune "+(i+1)+" —");});}'
@@ -532,8 +553,8 @@ _AIDE_AFFECTATION = (
     'Admin / Coordonnateur Nationale : toute la zone (rien à choisir) · '
     'Coordonnateur régionale, Comités Techniques : 1 à 5 districts · '
     'Traitement, Logistique District, Expert survey : 1 district · '
-    'Superviseur Technique, Logistique Inter-Communale : 1 district + 1 à 5 '
-    'communes.</div>')
+    f'Superviseur Technique, Logistique Inter-Communale : 1 district + 1 à '
+    f'{utilisateurs.MAX_COMMUNES_SUPERVISEUR} communes.</div>')
 
 
 def page_admin_ajouter(conn, message=None, erreur=None) -> str:
@@ -555,6 +576,10 @@ def page_admin_ajouter(conn, message=None, erreur=None) -> str:
         '<input name="cin" inputmode="numeric" placeholder="101012345678"></div>'
         '<div><label>Adresse e-mail</label>'
         '<input type="email" name="email" placeholder="nom@example.mg"></div>'
+        '<div><label>N° Orange (Float)</label>'
+        '<input name="numero_orange_float" inputmode="tel" '
+        'placeholder="0320000000"></div>'
+        '<div><label>Sexe</label>' + _select_sexe() + '</div>'
         '<div><label>Login</label><input name="login" required></div>'
         '<div><label>Mot de passe</label><input type="password" name="mot_de_passe" required></div>'
         + _bloc_affectation(prov_opts)
@@ -569,8 +594,9 @@ def page_admin_ajouter(conn, message=None, erreur=None) -> str:
         '<input type="file" name="fichier" accept=".xlsx" required></div>'
         '<div style="align-self:end"><button>Importer</button></div></form>'
         '<div class="note">Colonnes : <b>nom_prenom, responsabilite, telephone, cin, '
-        'email, login, mot_de_passe, district, communes, districts</b> '
-        '(telephone, cin, email facultatifs). '
+        'email, numero_orange_float, sexe, login, mot_de_passe, district, communes, '
+        'districts</b> '
+        '(telephone, cin, email, numero_orange_float, sexe facultatifs). '
         '<a href="/admin/modele.xlsx">⬇ Télécharger le modèle</a>. '
         '⚠️ Le fichier contient des mots de passe en clair : <b>supprimez-le</b> '
         'après l’import.</div>')
@@ -624,6 +650,10 @@ def page_admin_modifier(conn, login, message=None, erreur=None) -> str:
         + champ("cin", u.get("cin"), inputmode="numeric") + '</div>'
         '<div><label>Adresse e-mail</label>'
         + champ("email", u.get("email"), type="email") + '</div>'
+        '<div><label>N° Orange (Float)</label>'
+        + champ("numero_orange_float", u.get("numero_orange_float"),
+                inputmode="tel") + '</div>'
+        '<div><label>Sexe</label>' + _select_sexe(u.get("sexe")) + '</div>'
         f'<div><label>Login (non modifiable)</label>'
         f'<input value="{lg}" readonly style="background:#eee"></div>'
         '<div><label>Nouveau mot de passe <small>(vide = inchangé)</small></label>'

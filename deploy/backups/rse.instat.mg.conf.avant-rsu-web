@@ -1,0 +1,36 @@
+<VirtualHost *:443>
+        ServerAdmin webmaster@localhost
+        ServerName rse.instat.mg
+        ServerAlias rse.instat.mg
+        # DocumentRoot /var/www/html
+        RequestHeader set X-Forwarded-Proto https
+        ProxyPreserveHost On
+        ProxyRequests Off
+
+        Alias /todo /var/www/html/todo
+        <Directory /var/www/html/todo>
+                Require all granted
+        </Directory>
+        ProxyPass /todo !
+
+        ProxyPass /rsu-vague2/ http://127.0.0.1:5001/
+        ProxyPassReverse /rsu-vague2/ http://127.0.0.1:5001/
+
+        # ==================== RLF-RSU V2 (Flask / gunicorn) ====================
+        ProxyPass /rlf-rsu-v2/ http://127.0.0.1:5002/
+        ProxyPassReverse /rlf-rsu-v2/ http://127.0.0.1:5002/
+
+        ProxyPass / "http://192.168.88.222:8080/"
+        ProxyPassReverse / "http://192.168.88.222:8080/"
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+        SSLEngine on
+        SSLCertificateFile      /etc/ssl/certs/ssl-cert-snakeoil.pem
+        SSLCertificateKeyFile   /etc/ssl/private/ssl-cert-snakeoil.key
+        <FilesMatch "\.(?:cgi|shtml|phtml|php)$">
+                SSLOptions +StdEnvVars
+        </FilesMatch>
+        <Directory /usr/lib/cgi-bin>
+                SSLOptions +StdEnvVars
+        </Directory>
+</VirtualHost>

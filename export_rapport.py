@@ -10,6 +10,10 @@ pour construire la liste des ménages, exactement comme le rapport HTML) :
   Feuille 2 « Dénombrement par agent-jour » :
     - Ménages dénombrés par agent et par jour, regroupés par commune puis par chef
       d'équipe ; une colonne par date.
+  Feuille 3 « BaseDenParAgent » : table plate (commune, chef, agent, fokontany, dates).
+  Feuille 4 « segment_multiple » : rapport « Segments multiples » (mêmes résultats que
+    la page du tableau de bord) — un code de segment répété plus d'une fois dans un
+    fokontany (compté sur DEN_MENAGE) ; colonnes Fokontany / Segment / Nombre / Agents.
 
 Codage carnet (cf. gabarit) : 1 = avec carnet (scanné), 2 = avec carnet (non
 scanné), 3 = sans carnet, 4 = ne sait pas. Donc avec carnet = {1,2}, sans = {3},
@@ -63,16 +67,20 @@ def _stats(ms):
     return total, avec, sans, scan, pct
 
 
-def _menages_scope(conn, code_district, communes_autorisees):
-    """Construit la liste des ménages du périmètre via le moteur (codes agent bruts)."""
+def _donnees_scope(conn, code_district, communes_autorisees):
+    """Construit, via le moteur (codes agent bruts), les données du périmètre :
+    (menages, segments_den). `segments_den` = 1 objet par ligne DEN_MENAGE
+    (fktcode, seg, agent, commune) — base du rapport « segments multiples »."""
     if communes_autorisees:
         source = db_source.source_db(
             conn, communes=[int(c) for c in communes_autorisees])
     else:
         source = db_source.source_db(conn, district=code_district)
     diag = rapport_core._charger_diagnostics(source("diagnostics"), agents_noms=None)
-    seg_by_key, _ = rapport_core._charger_segments(source("den"), diag)
-    return rapport_core._construire_menages(source("roster"), seg_by_key)
+    seg_by_key, seg_liste = rapport_core._charger_segments(source("den"), diag)
+    menages = rapport_core._construire_menages(source("roster"), seg_by_key)
+    segments_den = rapport_core._construire_segments_den(seg_liste)
+    return menages, segments_den
 
 
 def _ecrire_entete(ws, ligne, colonnes, largeurs=None):
@@ -385,16 +393,86 @@ def _feuille_base_agents(wb, conn, nom_district, menages):
 
 
 # ---------------------------------------------------------------------------
+# Feuille 4 : segment_multiple (rapport « Segments multiples »)
+# ---------------------------------------------------------------------------
+def _feuille_segments_multiples(wb, conn, code_district, nom_district,
+                                segments_den, communes_autorisees):
+    """Rapport « Segments multiples » (même définition que le gabarit) : un code
+    de segment est MULTIPLE quand il se répète plus d'une fois dans un fokontany,
+    compté sur les lignes DEN_MENAGE (`segments_den`). Clé = (fokontany, code) :
+    on ne mélange pas les S01 de fokontany différents. Colonnes Fokontany /
+    Segment / Nombre / Agents concernés, comme la page du dashboard."""
+    ws = wb.create_sheet("segment_multiple")
+    ac = equipes.agents_et_chefs(conn)
+
+    # Libellés fokontany depuis le référentiel (comme NAV_TREE côté gabarit).
+    ref = zones.reference_district(conn, code_district)
+    if communes_autorisees is not None:
+        ref = [z for z in ref if z["ccode"] in communes_autorisees]
+    fkt_label = {z["fkt"]: z["label"] for z in ref}
+
+    # Regroupement par (fokontany, code segment) : n = lignes DEN_MENAGE, agents.
+    groups = {}
+    for s in segments_den:
+        fk = (str(s.get("fktcode")).strip() if s.get("fktcode") else "") \
+            or "(fkt manquant)"
+        code = (str(s.get("seg")).strip() if s.get("seg") else "") \
+            or "(code manquant)"
+        g = groups.setdefault((fk, code), {"n": 0, "agents": set()})
+        g["n"] += 1
+        ag = (s.get("agent") or "").strip()
+        if ag:
+            g["agents"].add(ac.get(ag, {}).get("nom") or ag)
+
+    multiples = [(fk, code, d["n"], d["agents"])
+                 for (fk, code), d in groups.items() if d["n"] > 1]
+    # Tri : par libellé de fokontany, puis nombre décroissant, puis code.
+    multiples.sort(key=lambda x: ((fkt_label.get(x[0]) or x[0]), -x[2], x[1]))
+
+    nb_fkt = len({m[0] for m in multiples})
+    portee = "ce district" if communes_autorisees is None else "ces communes"
+    r = _entete_document(
+        ws, nom_district,
+        f"Un code de segment est « multiple » quand il se répète plusieurs fois "
+        f"dans un même fokontany (d'après DEN_MENAGE). {len(multiples)} segment(s) "
+        f"multiple(s) dans {nb_fkt} fokontany · {len(segments_den)} segment(s) "
+        f"dénombré(s) dans {portee}.")
+    r = _titre(ws, r, "Tableau — Segments multiples "
+               "(mêmes résultats que la page « Segments multiples » du tableau de bord)")
+    r = _ecrire_entete(
+        ws, r,
+        ["Fokontany", "Segment", "Nombre de segments dénombrés",
+         "Agents concernés"],
+        largeurs=[34, 16, 20, 46])
+
+    if multiples:
+        for fk, code, n, agents in multiples:
+            label = fkt_label.get(fk) or fk
+            ags = ", ".join(sorted(agents)) or "—"
+            r = _ligne(ws, r, [label, code, n, ags])
+        r = _ligne(ws, r,
+                   [f"TOTAL — {len(multiples)} segment(s) multiple(s)", "",
+                    sum(m[2] for m in multiples), ""], total=True)
+    else:
+        r = _ligne(ws, r, ["Aucun segment multiple dans ce périmètre", "", "", ""])
+    r = _source(ws, r)
+    ws.freeze_panes = "A2"
+
+
+# ---------------------------------------------------------------------------
 # Point d'entrée
 # ---------------------------------------------------------------------------
 def generer_classeur(conn, code_district, nom_district, communes_autorisees=None):
     """Renvoie le classeur Excel (openpyxl Workbook) du district."""
-    menages = _menages_scope(conn, code_district, communes_autorisees)
+    menages, segments_den = _donnees_scope(conn, code_district,
+                                           communes_autorisees)
     wb = Workbook()
     _feuille_global(wb, conn, code_district, nom_district, menages,
                     communes_autorisees)
     _feuille_agents(wb, conn, nom_district, menages)
     _feuille_base_agents(wb, conn, nom_district, menages)
+    _feuille_segments_multiples(wb, conn, code_district, nom_district,
+                                segments_den, communes_autorisees)
     return wb
 
 

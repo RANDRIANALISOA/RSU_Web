@@ -121,6 +121,12 @@ def page_accueil(contexte) -> str:
              "Les documents à préparer, faire signer, scanner et archiver."),
             ("budget", "Budget de référence", "📊",
              "Les lignes de dépenses et montants unitaires de référence.")))
+    # Carte « Journal » — au même niveau que les autres choix (href hors /logistique).
+    cartes += (
+        '<a class="ca" href="/journal"><div class="ic">📓</div>'
+        '<div class="t">Mon journal de bord</div>'
+        '<div class="d">Consigner les activités que vous avez réalisées dans la '
+        'journée.</div></a>')
     return (_entete("accueil", contexte)
             + '<h1>Espace Logistique &amp; Finances</h1>'
             + _bloc_affectation(contexte)

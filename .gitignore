@@ -16,3 +16,6 @@ uploads/
 instance/
 *.log
 .env
+
+# Sauvegardes automatiques (ne pas versionner)
+*_backup_*/
