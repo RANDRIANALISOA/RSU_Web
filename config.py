@@ -25,6 +25,11 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 # version préfixée. Modifiable par variable d'environnement.
 PREFIXE = os.environ.get("RSU_PREFIXE", "/rsu").rstrip("/")
 
+# Date de début de la mission (AAAA-MM-JJ). Sert au SUIVI des rapports journaliers
+# (colonnes de dates = du début de mission à aujourd'hui, pour voir les jours
+# manqués). Modifiable par variable d'environnement.
+DATE_DEBUT_MISSION = os.environ.get("RSU_DATE_DEBUT_MISSION", "2026-08-27")
+
 # Projet .exe voisin (source des gros fichiers partagés en développement).
 _DEFAUT_EXE = os.path.normpath(os.path.join(BASE, "..", "RSU_Rapport"))
 EXE_DIR = os.environ.get("RSU_EXE_DIR", _DEFAUT_EXE)

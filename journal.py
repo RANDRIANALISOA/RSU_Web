@@ -54,6 +54,26 @@ def fmt_jour(iso) -> str:
         return iso or "—"
 
 
+def plage_dates(debut, fin=None):
+    """Liste des dates ISO « AAAA-MM-JJ » de `debut` à `fin` (défaut aujourd'hui),
+    INCLUSES. Sert au suivi des rapports (toutes les dates de la mission, y compris
+    les jours sans écriture). Renvoie [] si `debut` invalide ou postérieur à `fin`."""
+    try:
+        d0 = datetime.date.fromisoformat(debut)
+    except (TypeError, ValueError):
+        return []
+    try:
+        d1 = datetime.date.fromisoformat(fin) if fin else datetime.date.today()
+    except (TypeError, ValueError):
+        d1 = datetime.date.today()
+    out = []
+    d = d0
+    while d <= d1:
+        out.append(d.isoformat())
+        d += datetime.timedelta(days=1)
+    return out
+
+
 def creer_tables(conn) -> None:
     cur = conn.cursor()
     cur.execute(

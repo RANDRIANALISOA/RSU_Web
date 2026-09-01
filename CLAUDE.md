@@ -1230,8 +1230,11 @@ après arrêt de l'instance de test, systemd a repris le port et l'app est stabl
     CHOISIR un district** via une **cascade Province→Région→District** (`page_journal_suivi_
     choix`, JS `ARBRE_GEO`) — le suivi s'affiche ensuite pour CE district (lien « Changer
     de district ») ; le **Régional** voit **directement ses districts** (groupés par district
-    pour les rôles à axe). Colonnes de dates = **union triée des jours réellement écrits**
-    (`journal.dates_ecrites(logins)`), total par membre `n/N`. `page_journal_suivi` :
+    pour les rôles à axe). Colonnes de dates = **TOUS les jours de la mission**
+    (`journal.plage_dates(config.DATE_DEBUT_MISSION)` = du **début de mission**, défaut
+    **2026-08-27**, réglable par `RSU_DATE_DEBUT_MISSION`, **à aujourd'hui**) — y compris
+    les jours SANS écriture, pour voir les manques (✗) ; `journal.dates_ecrites(logins)`
+    donne les jours écrits par membre, total `n/N`. `page_journal_suivi` :
     défilement horizontal, 1re colonne (nom) figée. Testé (COPIE) : National sans district
     → page de choix (pas de tableau) ; National `?district=1101` → suivi de ce district,
     Sup Tech groupé par district+axe, autre district exclu ; Régional → 2 districts groupés

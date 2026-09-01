@@ -3503,10 +3503,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         finally:
             conn.close()
 
-        toutes = set()
-        for s in dates_par_login.values():
-            toutes |= s
-        dates = sorted(toutes)
+        # Colonnes de dates = TOUS les jours de la mission (début → aujourd'hui),
+        # y compris les jours où personne n'a écrit -> les manques sont visibles (✗).
+        dates = journal.plage_dates(config.DATE_DEBUT_MISSION)
 
         def _tri_membres(gens):
             return sorted(gens, key=lambda a: (a.get("nom_prenom") or a["login"]))
