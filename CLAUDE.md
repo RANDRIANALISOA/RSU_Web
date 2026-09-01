@@ -56,7 +56,9 @@ rapport interactif.
 > couche de **suivi d'équipe** (voir la section datée 2026-08-31) — **Journal de bord**
 > (`journal.py`, `/journal` : l'équipe technique écrit ses activités du jour avec rappel
 > par bulle + historique complet ; les coordonnateurs LISENT, filtres district/fonction/
-> axe/nom/date), **Consignes / instructions** (`consignes.py`, `/consignes` : les deux
+> axe/nom/date ; **SUIVI de complétude** `/journal/suivi` = qui a écrit ou non chaque
+> jour de mission, par poste/district/axe, le National choisissant son district),
+> **Consignes / instructions** (`consignes.py`, `/consignes` : les deux
 > coordonnateurs envoient des consignes ciblées par rôles+districts, reçues via une bulle,
 > modifiables/supprimables par l'auteur ; lecture filtrable), et **« Mon profil »**
 > (`/profil`, tous rôles : chacun édite ses CIN/téléphone/N° Orange Float/e-mail/**sexe**,
@@ -238,6 +240,9 @@ RSU_Web/
 │                          (LECTURE bornee au perimetre + filtres district/fonction/
 │                          zone/nom/date), options_lecture (valeurs distinctes pour
 │                          les listes ; le filtre zone/axe est DEPENDANT district+role).
+│                          SUIVI : dates_ecrites(logins) = {login: jours ecrits} et
+│                          plage_dates(debut) = tous les jours de mission -> page
+│                          /journal/suivi (completude par poste/district/axe).
 │                          Route /journal (serveur_app), cf. section datee 2026-08-31.
 ├── consignes.py        <- CONSIGNES / INSTRUCTIONS des Coordonnateurs.          [FONCTIONNEL]
 │                          Tables consigne(id, auteur_*, roles_cibles, districts_cibles,
@@ -797,7 +802,12 @@ et les gros dossiers `DATA/`, `Cartographie/`, `LimitesFokontany/`. Ils appartie
   rôles sauf les 2 coordonnateurs et Admin ; plusieurs entrées/jour ; **bulle de rappel**
   si rien écrit le jour) ; **LECTURE** par les coordonnateurs National/Régional + Admin
   (bornée au périmètre ; **filtres** District cascade/restreint, Fonction, Axe/Zone
-  dépendant — Superviseur/Logistique Inter-Communale au sein d'un district —, Nom, Date).
+  dépendant — Superviseur/Logistique Inter-Communale au sein d'un district —, Nom, Date) ;
+  **HISTORIQUE** personnel complet (`/journal/historique`) ; **SUIVI de complétude**
+  (`/journal/suivi`, carte sur le menu Coordonnateur) = tableau membres × jours de mission
+  (✓/✗) pour voir qui a écrit ou non, **par poste**, et **par district puis axe** pour
+  Superviseur Technique / Logistique Inter-Communale (le National choisit d'abord son
+  district par cascade ; colonnes = du début de mission `config.DATE_DEBUT_MISSION` à ce jour).
 - **Consignes / instructions** (`consignes.py`, `/rsu/consignes[/nouvelle]`) — voir la
   section datée **2026-08-31** : les Coordonnateurs (National/Régional) envoient des
   consignes ciblées par **rôles** (ou tout le monde) et **districts** (ou tous ; Régional
