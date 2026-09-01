@@ -55,7 +55,8 @@ rapport interactif.
 > **COLLABORATION (maj 2026-08-31)** : au-delà du dashboard, l'app porte désormais une
 > couche de **suivi d'équipe** (voir la section datée 2026-08-31) — **Journal de bord**
 > (`journal.py`, `/journal` : l'équipe technique écrit ses activités du jour avec rappel
-> par bulle + historique complet ; les coordonnateurs LISENT, filtres district/fonction/
+> par bulle, entrées modifiables par leur auteur (cree_le figé + modifie_le), historique
+> complet ; les coordonnateurs LISENT, filtres district/fonction/
 > axe/nom/date ; **SUIVI de complétude** `/journal/suivi` = qui a écrit ou non chaque
 > jour de mission, par poste/district/axe, le National choisissant son district),
 > **Consignes / instructions** (`consignes.py`, `/consignes` : les deux
@@ -802,7 +803,8 @@ et les gros dossiers `DATA/`, `Cartographie/`, `LimitesFokontany/`. Ils appartie
 - **Journal de bord** (`/rsu/journal`, `journal.py`) — voir la section datée
   **2026-08-31** pour le détail : **ÉCRITURE** quotidienne par l'équipe technique (tous
   rôles sauf les 2 coordonnateurs et Admin ; plusieurs entrées/jour ; **bulle de rappel**
-  si rien écrit le jour) ; **LECTURE** par les coordonnateurs National/Régional + Admin
+  si rien écrit le jour ; **entrées MODIFIABLES par leur auteur** — `cree_le` figé +
+  `modifie_le` horodaté) ; **LECTURE** par les coordonnateurs National/Régional + Admin
   (bornée au périmètre ; **filtres** District cascade/restreint, Fonction, Axe/Zone
   dépendant — Superviseur/Logistique Inter-Communale au sein d'un district —, Nom, Date) ;
   **HISTORIQUE** personnel complet (`/journal/historique`) ; **SUIVI de complétude**
