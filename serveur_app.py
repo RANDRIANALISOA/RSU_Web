@@ -1655,6 +1655,10 @@ _STYLE_JOURNAL = """
   .jr-tag{font-size:.78rem;color:#5a6675;background:#eef2f7;border-radius:999px;
     padding:2px 10px}
   .jr-txt{white-space:pre-wrap;margin:0;color:#26303c}
+  .jr-mod{margin-left:auto;border:1px solid #c7dbf7;background:#eaf1fd;color:#1558c9;
+    font-weight:600;font-size:.78rem;border-radius:8px;padding:4px 10px;
+    text-decoration:none;transition:.15s;white-space:nowrap}
+  .jr-mod:hover{background:#1558c9;color:#fff;border-color:#1558c9}
   .jr-form-en-ligne{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
   .jr-form-en-ligne label{margin:0 0 6px}
   .jr-filtres{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
@@ -1667,6 +1671,63 @@ _STYLE_JOURNAL = """
   .jr-actions{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
   .jr-btn.sm{margin-top:0;padding:10px 18px}
 """
+
+
+def _journal_entree_html(e) -> str:
+    """HTML d'UNE entrée de journal (liste), avec date/zone, « écrit le », « modifié
+    le » (si modifiée) et un bouton **✏️ Modifier** (vers /journal/modifier?id=)."""
+    esc = htmllib.escape
+    mod = (f'<span class="jr-tag">modifié le {esc(e.get("modifie_court") or "")}</span>'
+           if e.get("modifie_le") else '')
+    return (
+        '<div class="jr-e"><div class="jr-e-h">'
+        f'<span class="jr-date">{esc(e["date_court"])}</span>'
+        f'<span class="jr-tag">{esc(e.get("zone") or "")}</span>'
+        f'<span class="jr-tag">écrit le {esc(e["cree_court"])}</span>'
+        f'{mod}'
+        f'<a class="jr-mod" href="/journal/modifier?id={esc(e.get("id") or "")}">'
+        '✏️ Modifier</a></div>'
+        f'<p class="jr-txt">{esc(e["journal"] or "")}</p></div>')
+
+
+def page_journal_modifier(u, entree, erreur: str = "") -> str:
+    """Formulaire de MODIFICATION d'une entrée de journal (son auteur). Date du jour
+    + texte modifiables ; date initiale (`cree_le`) affichée FIGÉE, dernière
+    modification affichée si présente."""
+    esc = htmllib.escape
+    role = (u.get("responsabilite") or "").strip()
+    champ_style = ('width:100%;padding:11px 13px;font-size:1rem;background:#f7f9fc;'
+                   'border:1.5px solid #e1e7ef;border-radius:11px')
+    bloc = f'<div class="jr-msg err">{esc(erreur)}</div>' if erreur else ''
+    maj = (f'<span><b>Dernière modification :</b> {esc(entree.get("modifie_court"))}'
+           '</span>' if entree.get("modifie_le") else '')
+    return (
+        '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>RSU 2026 — Modifier mon journal</title>'
+        f'<style>{_STYLE_JOURNAL}</style></head><body><div class="jr-wrap">'
+        '<div class="jr-carte">'
+        '<h1>✏️ Modifier une entrée de mon journal</h1>'
+        '<p class="jr-sous">Vous pouvez corriger la date et le contenu. La date de '
+        'création initiale reste inchangée.</p>'
+        f'{bloc}'
+        '<div class="jr-meta">'
+        f'<span><b>Axe / Zone :</b> {esc(entree.get("zone") or "—")}</span>'
+        f'<span><b>Créé le :</b> {esc(entree.get("cree_court"))}</span>'
+        f'{maj}</div>'
+        '<form method="post" action="/journal/modifier">'
+        f'<input type="hidden" name="id" value="{esc(entree.get("id") or "")}">'
+        '<label for="date_jour">Date</label>'
+        f'<input type="date" id="date_jour" name="date_jour" '
+        f'value="{esc(entree.get("date_jour") or "")}" '
+        f'max="{esc(journal.aujourdhui())}" required style="{champ_style}">'
+        '<label for="journal">Activités de la journée</label>'
+        f'<textarea id="journal" name="journal" required>{esc(entree.get("journal") or "")}'
+        '</textarea>'
+        '<div class="jr-actions"><button type="submit" class="jr-btn">'
+        'Enregistrer les modifications</button>'
+        '<a class="jr-retour" href="/journal" style="margin-top:0">Annuler</a></div>'
+        '</form></div></div></body></html>')
 
 
 def page_journal_ecrire(u, zone, code_district, date_defaut, mes_entrees,
@@ -1684,13 +1745,7 @@ def page_journal_ecrire(u, zone, code_district, date_defaut, mes_entrees,
         bloc_msg = f'<div class="jr-msg err">{esc(erreur)}</div>'
 
     if mes_entrees:
-        lignes = "".join(
-            '<div class="jr-e"><div class="jr-e-h">'
-            f'<span class="jr-date">{esc(e["date_court"])}</span>'
-            f'<span class="jr-tag">{esc(e.get("zone") or "")}</span>'
-            f'<span class="jr-tag">écrit le {esc(e["cree_court"])}</span>'
-            f'</div><p class="jr-txt">{esc(e["journal"] or "")}</p></div>'
-            for e in mes_entrees)
+        lignes = "".join(_journal_entree_html(e) for e in mes_entrees)
     else:
         lignes = ('<p class="jr-vide">Aucune entrée pour l’instant. '
                   'Commencez par décrire vos activités du jour ci-dessus.</p>')
@@ -1738,13 +1793,7 @@ def page_journal_historique(u, entrees, date_filtre, total) -> str:
     role = (u.get("responsabilite") or "").strip()
     nom = (u.get("nom_prenom") or u.get("login") or "").strip()
     if entrees:
-        lignes = "".join(
-            '<div class="jr-e"><div class="jr-e-h">'
-            f'<span class="jr-date">{esc(e["date_court"])}</span>'
-            f'<span class="jr-tag">{esc(e.get("zone") or "")}</span>'
-            f'<span class="jr-tag">écrit le {esc(e["cree_court"])}</span>'
-            f'</div><p class="jr-txt">{esc(e["journal"] or "")}</p></div>'
-            for e in entrees)
+        lignes = "".join(_journal_entree_html(e) for e in entrees)
         pied = f'<p class="jr-sous">{len(entrees)} entrée(s) affichée(s).</p>'
     else:
         lignes = ('<p class="jr-vide">Aucune entrée ne correspond à cette date.</p>'
@@ -2903,6 +2952,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if chemin == "/journal/historique":
             self._journal_historique_get(sess)
             return
+        # Modifier une de MES entrées de journal (rôles d'écriture).
+        if chemin == "/journal/modifier":
+            self._journal_modifier_get(sess)
+            return
         # Suivi de complétude du journal (Coordonnateurs + Admin) : qui a écrit ou
         # non, par poste (par axe pour Sup. Technique / Logistique Inter-Communale).
         if chemin == "/journal/suivi":
@@ -3179,6 +3232,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._traiter_profil()
         elif chemin == "/journal":
             self._journal_post()
+        elif chemin == "/journal/modifier":
+            self._journal_modifier_post()
         elif chemin == "/consignes/nouvelle":
             self._consignes_nouvelle_post()
         elif chemin == "/consignes/modifier":
@@ -3358,15 +3413,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             login = sess.get("login") or u.get("login")
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             ok = q.get("ok", [""])[0] == "1"
+            maj = q.get("maj", [""])[0] == "1"
             conn = db_source.connect()
             try:
                 zone, _codes = _journal_zone(conn, u)
                 mes = journal.mes_activites(conn, login)
             finally:
                 conn.close()
+            msg = ("Votre journal du jour a bien été enregistré." if ok
+                   else "Votre entrée de journal a bien été modifiée." if maj
+                   else "")
             self._html(page_journal_ecrire(
-                u, zone, _codes, journal.aujourdhui(), mes,
-                message=("Votre journal du jour a bien été enregistré." if ok else "")))
+                u, zone, _codes, journal.aujourdhui(), mes, message=msg))
             return
         if role in _ROLES_JOURNAL_LECTURE:
             districts = perimetre(u)[0]         # None = tout ; set = ses districts
@@ -3443,6 +3501,63 @@ class Handler(http.server.BaseHTTPRequestHandler):
         entrees = ([e for e in toutes if e.get("date_jour") == date_f]
                    if date_f else toutes)
         self._html(page_journal_historique(u, entrees, date_f, total=len(toutes)))
+
+    def _journal_modifier_get(self, sess):
+        """GET /journal/modifier?id= : formulaire de modification d'UNE de MES
+        entrées (rôles d'écriture, propriétaire uniquement)."""
+        u = (sess or {}).get("utilisateur") or {}
+        role = (u.get("responsabilite") or "").strip()
+        if role not in _ROLES_JOURNAL_ECRITURE:
+            self._redirige("/journal")
+            return
+        login = sess.get("login") or u.get("login")
+        cid = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(self.path).query).get("id", [""])[0]
+        conn = db_source.connect()
+        try:
+            e = journal.obtenir_activite(conn, cid, login)
+        finally:
+            conn.close()
+        if not e:
+            self._redirige("/journal")       # inconnue / pas à moi
+            return
+        self._html(page_journal_modifier(u, e))
+
+    def _journal_modifier_post(self):
+        """POST /journal/modifier : applique la modification (propriétaire seul).
+        `cree_le` reste figé ; `modifie_le` est horodaté."""
+        sess = _session(self)
+        if sess is None:
+            self._redirige("/login")
+            return
+        u = (sess or {}).get("utilisateur") or {}
+        role = (u.get("responsabilite") or "").strip()
+        if role not in _ROLES_JOURNAL_ECRITURE:
+            self._html(page_erreur("Modification réservée à l'équipe technique.",
+                                   403), 403)
+            return
+        login = sess.get("login") or u.get("login")
+        c = self._corps_formulaire()
+        cid = (c.get("id", [""])[0] or "").strip()
+        texte = (c.get("journal", [""])[0] or "").strip()
+        date_jour = (c.get("date_jour", [""])[0] or "").strip() or journal.aujourdhui()
+        if date_jour > journal.aujourdhui():
+            date_jour = journal.aujourdhui()
+        conn = db_source.connect()
+        try:
+            e = journal.obtenir_activite(conn, cid, login)
+            if not e:
+                self._redirige("/journal")
+                return
+            if not texte:
+                e["date_jour"] = date_jour     # conserver la saisie
+                self._html(page_journal_modifier(
+                    u, e, erreur="Le journal ne peut pas être vide."))
+                return
+            journal.modifier_activite(conn, cid, login, date_jour, texte)
+        finally:
+            conn.close()
+        self._redirige("/journal?maj=1")
 
     def _journal_suivi_get(self, sess):
         """GET /journal/suivi : suivi de complétude du journal (Coordonnateurs +

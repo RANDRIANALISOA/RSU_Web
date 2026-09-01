@@ -234,8 +234,10 @@ RSU_Web/
 │                          fmt_quand() = JJ/MM/AAAA HH:MM. Rempli par serveur_app.
 │                          JOURNAL DE BORD (activites quotidiennes) : table
 │                          journal_activite(id, login, nom_prenom, fonction, zone,
-│                          code_district, date_jour, journal, cree_le). ecrire_activite
-│                          (equipe technique, plusieurs entrees/jour), a_ecrit_le
+│                          code_district, date_jour, journal, cree_le FIGE, modifie_le).
+│                          ecrire_activite (equipe technique, plusieurs entrees/jour),
+│                          obtenir_activite/modifier_activite (edition par le
+│                          proprietaire ; cree_le fige, modifie_le horodate), a_ecrit_le
 │                          (bulle de rappel), mes_activites (page ecriture), activites
 │                          (LECTURE bornee au perimetre + filtres district/fonction/
 │                          zone/nom/date), options_lecture (valeurs distinctes pour
@@ -1229,6 +1231,15 @@ après arrêt de l'instance de test, systemd a repris le port et l'app est stabl
     les gardes ; un lecteur y est renvoyé vers `/journal`) : page dédiée qui affiche
     **TOUTES** ses entrées (`mes_activites(limite=1000000)`) avec le **total** et un
     **filtre par date**. Testé (COPIE) : total exact, filtre date, redirection lecteur.
+  - **MODIFICATION d'une entrée** (comme les consignes) : chaque entrée listée porte un
+    bouton **✏️ Modifier** → **`/journal/modifier?id=`** (GET formulaire pré-rempli +
+    POST), **propriétaire UNIQUEMENT** (`journal.obtenir_activite`/`modifier_activite`
+    vérifient le login ; sinon 303/refus). On peut corriger la **date du jour** et le
+    **texte**. **`cree_le` reste FIGÉ** (date initiale) et une colonne **`modifie_le`**
+    (migration auto `_migrer_activite`) reçoit l'horodatage de la dernière modification ;
+    la liste affiche « écrit le … » et « modifié le … ». Testé (COPIE) : migration
+    (colonne ajoutée), pré-remplissage, `cree_le` inchangé + `modifie_le` renseigné,
+    garde propriétaire (autre rédacteur → 303, POST non appliqué).
   - **SUIVI de complétude** (`/journal/suivi`, `_ROLES_JOURNAL_LECTURE`, **carte sur
     le menu Coordonnateur**) : tableau **membres × dates** (✓ a écrit / ✗ non) pour voir,
     chaque jour passé, qui a rempli son rapport. **Groupé par POSTE**, et **par DISTRICT

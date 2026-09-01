@@ -97,12 +97,15 @@ def creer_tables(conn) -> None:
     # jeton généré côté Python (portable SQLite/PostgreSQL, pas d'auto-incrément).
     # `code_district` = codes des districts du périmètre, séparés par des virgules
     # (sert au filtrage de LECTURE du Coordonnateur régional, borné à ses districts).
+    # `cree_le` = date INITIALE figée (jamais modifiée) ; `modifie_le` = date de la
+    # dernière modification (NULL tant que l'entrée n'a pas été modifiée).
     cur.execute(
         'CREATE TABLE IF NOT EXISTS "journal_activite" ('
         '"id" TEXT PRIMARY KEY, "login" TEXT, "nom_prenom" TEXT, '
         '"fonction" TEXT, "zone" TEXT, "code_district" TEXT, '
-        '"date_jour" TEXT, "journal" TEXT, "cree_le" TEXT)')
+        '"date_jour" TEXT, "journal" TEXT, "cree_le" TEXT, "modifie_le" TEXT)')
     _migrer_transcription(conn)
+    _migrer_activite(conn)
     conn.commit()
 
 
@@ -127,6 +130,16 @@ def _migrer_transcription(conn) -> None:
         if col not in cols:
             conn.cursor().execute(
                 f'ALTER TABLE "journal_transcription" ADD COLUMN "{col}" TEXT')
+
+
+def _migrer_activite(conn) -> None:
+    """Ajoute la colonne `modifie_le` au journal de bord des bases antérieures."""
+    cols = _colonnes(conn, "journal_activite")
+    if not cols:                       # table absente : creer_tables s'en charge
+        return
+    if "modifie_le" not in cols:
+        conn.cursor().execute(
+            'ALTER TABLE "journal_activite" ADD COLUMN "modifie_le" TEXT')
 
 
 def ouvrir(conn, jeton, login, nom_prenom, responsabilite, ip="") -> None:
@@ -286,11 +299,13 @@ def a_ecrit_le(conn, login, date_jour) -> bool:
 
 
 def mes_activites(conn, login, limite=100):
-    """Mes propres entrées de journal (plus récente d'abord). Page d'écriture."""
+    """Mes propres entrées de journal (plus récente d'abord). Page d'écriture.
+    Chaque entrée porte son `id` (pour la modification), `cree_le` (date initiale
+    figée) et `modifie_le` (dernière modification, None si jamais modifiée)."""
     ph = db_source._placeholder(conn)
     cur = conn.cursor()
-    cur.execute('SELECT "date_jour","zone","journal","cree_le","fonction","nom_prenom" '
-                'FROM "journal_activite" '
+    cur.execute('SELECT "date_jour","zone","journal","cree_le","fonction",'
+                '"nom_prenom","id","modifie_le" FROM "journal_activite" '
                 f'WHERE "login"={ph} ORDER BY "date_jour" DESC, "cree_le" DESC',
                 (login,))
     out = []
@@ -298,8 +313,46 @@ def mes_activites(conn, login, limite=100):
         out.append({"date_jour": r[0], "date_court": fmt_jour(r[0]),
                     "zone": r[1], "journal": r[2],
                     "cree_le": r[3], "cree_court": fmt_quand(r[3]),
-                    "fonction": r[4], "nom_prenom": r[5]})
+                    "fonction": r[4], "nom_prenom": r[5], "id": r[6],
+                    "modifie_le": r[7],
+                    "modifie_court": fmt_quand(r[7]) if r[7] else ""})
     return out
+
+
+def obtenir_activite(conn, id_activite, login):
+    """Une entrée de journal par id, SEULEMENT si elle appartient à `login`
+    (sinon None). Pour le pré-remplissage du formulaire de modification."""
+    ph = db_source._placeholder(conn)
+    cur = conn.cursor()
+    cur.execute('SELECT "id","login","nom_prenom","fonction","zone","code_district",'
+                '"date_jour","journal","cree_le","modifie_le" '
+                f'FROM "journal_activite" WHERE "id"={ph}', (id_activite,))
+    r = cur.fetchone()
+    if not r or r[1] != login:
+        return None
+    return {"id": r[0], "login": r[1], "nom_prenom": r[2], "fonction": r[3],
+            "zone": r[4], "code_district": r[5], "date_jour": r[6],
+            "date_court": fmt_jour(r[6]), "journal": r[7], "cree_le": r[8],
+            "cree_court": fmt_quand(r[8]), "modifie_le": r[9],
+            "modifie_court": fmt_quand(r[9]) if r[9] else ""}
+
+
+def modifier_activite(conn, id_activite, login, date_jour, texte) -> bool:
+    """Modifie le texte (et la date du jour) d'une entrée, SEULEMENT si elle
+    appartient à `login`. `cree_le` reste FIGÉ ; `modifie_le` reçoit l'horodatage
+    courant. Renvoie True si modifiée, False sinon (inconnue / pas à cet auteur)."""
+    ph = db_source._placeholder(conn)
+    cur = conn.cursor()
+    cur.execute(f'SELECT "login" FROM "journal_activite" WHERE "id"={ph}',
+                (id_activite,))
+    row = cur.fetchone()
+    if not row or row[0] != login:
+        return False
+    cur.execute('UPDATE "journal_activite" SET "date_jour"={p},"journal"={p},'
+                '"modifie_le"={p} WHERE "id"={p}'.format(p=ph),
+                (date_jour, texte, _maintenant(), id_activite))
+    conn.commit()
+    return True
 
 
 def activites(conn, districts=None, date_jour=None, login=None,
