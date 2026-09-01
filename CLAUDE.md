@@ -1221,15 +1221,21 @@ après arrêt de l'instance de test, systemd a repris le port et l'app est stabl
     **filtre par date**. Testé (COPIE) : total exact, filtre date, redirection lecteur.
   - **SUIVI de complétude** (`/journal/suivi`, `_ROLES_JOURNAL_LECTURE`, **carte sur
     le menu Coordonnateur**) : tableau **membres × dates** (✓ a écrit / ✗ non) pour voir,
-    chaque jour passé, qui a rempli son rapport. **Groupé par POSTE**, et **par AXE**
-    (communes) pour **Superviseur Technique** et **Logistique Inter-Communale**
-    (`_ROLES_DISTRICT_COMMUNES`). Membres suivis = comptes des rôles d'ÉCRITURE
-    (`_ROLES_JOURNAL_ECRITURE`) **dans le périmètre** (National = tous, Régional = ses
-    districts). Colonnes de dates = **union triée des jours réellement écrits**
+    chaque jour passé, qui a rempli son rapport. **Groupé par POSTE**, et **par DISTRICT
+    puis AXE** (communes) pour **Superviseur Technique** et **Logistique Inter-Communale**
+    (`_ROLES_DISTRICT_COMMUNES`) — `groupes` = `[(poste, mode, data)]` avec mode `flat`
+    (data=[membres]) ou `district` (data=[(district, [(axe,[membres])])]). Membres suivis
+    = comptes des rôles d'ÉCRITURE (`_ROLES_JOURNAL_ECRITURE`) **dans le périmètre**.
+    **Choix du district (2026-08-31)** : le National / Admin (zone entière) **doit d'abord
+    CHOISIR un district** via une **cascade Province→Région→District** (`page_journal_suivi_
+    choix`, JS `ARBRE_GEO`) — le suivi s'affiche ensuite pour CE district (lien « Changer
+    de district ») ; le **Régional** voit **directement ses districts** (groupés par district
+    pour les rôles à axe). Colonnes de dates = **union triée des jours réellement écrits**
     (`journal.dates_ecrites(logins)`), total par membre `n/N`. `page_journal_suivi` :
-    tableau à défilement horizontal, 1re colonne (nom) figée. Testé (COPIE) : groupes
-    par poste, sous-groupes par axe, ✓/✗ et totaux exacts (jtrait 2/5, jexp 1/5,
-    jcomite 0/5), périmètre respecté (district hors périmètre exclu pour le Régional).
+    défilement horizontal, 1re colonne (nom) figée. Testé (COPIE) : National sans district
+    → page de choix (pas de tableau) ; National `?district=1101` → suivi de ce district,
+    Sup Tech groupé par district+axe, autre district exclu ; Régional → 2 districts groupés
+    (AMBOHIDRATRIMO + AVARADRANO) ; ✓/✗ et totaux exacts ; périmètre respecté.
   - **LECTURE** (`_ROLES_JOURNAL_LECTURE` = Coordonnateur Nationale, Coordonnateur
     régionale, Admin) : page « Journaux des équipes » (`page_journal_lecture`) —
     liste **bornée au périmètre** (`journal.activites(districts=perimetre(u)[0])` :

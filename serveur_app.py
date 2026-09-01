@@ -1791,51 +1791,61 @@ _STYLE_SUIVI = """
   table.sv td.tot{font-weight:800;background:#f7f9fc}
   table.sv tr.grp td{background:#e7f0ff;font-weight:800;text-align:left;color:#1558c9;
     position:sticky;left:0}
+  table.sv tr.dist td{background:#eef7f2;font-weight:700;text-align:left;color:#127a52;
+    position:sticky;left:0}
   table.sv tr.axe td{background:#f7f9fc;font-style:italic;text-align:left;color:#5a6675}
 """
 
 
-def page_journal_suivi(u, groupes, dates, dates_par_login, portee) -> str:
+def page_journal_suivi(u, groupes, dates, dates_par_login, portee,
+                       retour_choix=None) -> str:
     """Suivi de complétude du journal (Coordonnateurs + Admin) : tableau
-    membres × dates (✓ écrit / ✗ non), groupé par poste — et par AXE pour les
-    Superviseurs Techniques et Logistiques Inter-Communales. `groupes` =
-    [(poste, [(axe|None, [membre...])])] ; `dates` = liste triée de date_jour."""
+    membres × dates (✓ écrit / ✗ non), groupé par poste — et par DISTRICT puis AXE
+    pour les Superviseurs Techniques / Logistiques Inter-Communales.
+    `groupes` = [(poste, mode, data)] : mode "flat" -> data=[membres] ;
+    mode "district" -> data=[(district_nom, [(axe, [membres])])].
+    `retour_choix` (National/Admin) = lien pour changer de district."""
     esc = htmllib.escape
     role = (u.get("responsabilite") or "").strip()
     retour = accueil_role(role)
     ndates = len(dates)
     ncols = ndates + 2                       # nom + dates + total
+    dates_set = set(dates)
 
     def _court(d):                            # 'YYYY-MM-DD' -> 'JJ/MM'
         return f"{d[8:10]}/{d[5:7]}" if len(d) >= 10 else d
 
+    def _ligne_membre(m):
+        nom = esc((m.get("nom_prenom") or m.get("login") or "").strip())
+        ecrites = dates_par_login.get(m["login"], set())
+        cells = "".join(
+            (f'<td class="ok" title="{esc(journal.fmt_jour(d))}">✓</td>' if d in ecrites
+             else f'<td class="no" title="{esc(journal.fmt_jour(d))}">✗</td>')
+            for d in dates)
+        n = len(ecrites & dates_set)
+        return f'<tr><td class="nom">{nom}</td>{cells}<td class="tot">{n}/{ndates}</td></tr>'
+
     if not dates or not groupes:
         corps = ('<p class="jr-vide">Aucun rapport journalier n’a encore été écrit '
-                 'par les équipes de votre périmètre.</p>')
+                 'par les équipes de ce périmètre.</p>')
     else:
         entete = ('<tr><th class="nom">Membre</th>'
                   + "".join(f'<th title="{esc(journal.fmt_jour(d))}">{esc(_court(d))}</th>'
                             for d in dates)
                   + '<th>Total</th></tr>')
         lignes = []
-        dates_set = set(dates)
-        for poste, sous in groupes:
+        for poste, mode, data in groupes:
             lignes.append(f'<tr class="grp"><td colspan="{ncols}">📋 {esc(poste)}</td></tr>')
-            for axe, membres in sous:
-                if axe is not None:
-                    lignes.append('<tr class="axe"><td colspan="'
-                                  f'{ncols}">Axe : {esc(axe)}</td></tr>')
-                for m in membres:
-                    nom = esc((m.get("nom_prenom") or m.get("login") or "").strip())
-                    ecrites = dates_par_login.get(m["login"], set())
-                    cells = "".join(
-                        (f'<td class="ok" title="{esc(journal.fmt_jour(d))}">✓</td>'
-                         if d in ecrites
-                         else f'<td class="no" title="{esc(journal.fmt_jour(d))}">✗</td>')
-                        for d in dates)
-                    n = len(ecrites & dates_set)
-                    lignes.append(f'<tr><td class="nom">{nom}</td>{cells}'
-                                  f'<td class="tot">{n}/{ndates}</td></tr>')
+            if mode == "district":
+                for district_nom, axes in data:
+                    lignes.append('<tr class="dist"><td colspan="'
+                                  f'{ncols}">🏙️ District : {esc(district_nom)}</td></tr>')
+                    for axe, membres in axes:
+                        lignes.append('<tr class="axe"><td colspan="'
+                                      f'{ncols}">Axe : {esc(axe)}</td></tr>')
+                        lignes += [_ligne_membre(m) for m in membres]
+            else:                              # flat
+                lignes += [_ligne_membre(m) for m in data]
         corps = ('<div class="sv-leg">'
                  '<span><i class="sv-pastille" style="background:#e8f7f0;'
                  'border:1px solid #b8e6d2"></i> ✓ a écrit son journal ce jour</span>'
@@ -1845,6 +1855,9 @@ def page_journal_suivi(u, groupes, dates, dates_par_login, portee) -> str:
                  f'<thead>{entete}</thead><tbody>{"".join(lignes)}</tbody>'
                  '</table></div>')
 
+    lien_changer = (f'<a class="jr-retour" href="{esc(retour_choix)}" '
+                    'style="margin-right:16px">↩ Changer de district</a>'
+                    if retour_choix else '')
     return (
         '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -1852,12 +1865,62 @@ def page_journal_suivi(u, groupes, dates, dates_par_login, portee) -> str:
         f'<style>{_STYLE_JOURNAL}{_STYLE_SUIVI}</style></head>'
         '<body><div class="jr-wrap" style="max-width:1200px"><div class="jr-carte">'
         '<h1>🗓️ Suivi des rapports journaliers</h1>'
-        f'<p class="jr-sous">{esc(portee)} — par poste (et par axe pour les '
+        f'<p class="jr-sous">{esc(portee)} — par poste (par district puis axe pour les '
         'Superviseurs Techniques et Logistiques Inter-Communales). '
         f'{ndates} date(s) suivie(s).</p>'
         f'{corps}'
-        f'<a class="jr-retour" href="{esc(retour)}">← Retour à mon espace</a>'
+        f'<div style="margin-top:6px">{lien_changer}'
+        f'<a class="jr-retour" href="{esc(retour)}">← Retour à mon espace</a></div>'
         '</div></div></body></html>')
+
+
+def page_journal_suivi_choix(u) -> str:
+    """Sélection d'un district (cascade Province→Région→District) avant d'afficher
+    le suivi — pour le Coordonnateur National / Admin (zone entière)."""
+    esc = htmllib.escape
+    role = (u.get("responsabilite") or "").strip()
+    options_prov = "".join(
+        f'<option value="{p["c"]}">{esc(str(p["n"]))}</option>'
+        for p in ARBRE_GEO.get("provinces", []))
+    return (
+        '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>RSU 2026 — Suivi : choisir un district</title>'
+        f'<style>{_STYLE_JOURNAL}{_STYLE_SUIVI}</style></head>'
+        '<body><div class="jr-wrap"><div class="jr-carte">'
+        '<h1>🗓️ Suivi des rapports journaliers</h1>'
+        '<p class="jr-sous">Vous gérez plusieurs districts : choisissez d’abord le '
+        '<b>district</b> dont vous voulez voir le suivi.</p>'
+        '<form method="get" action="/journal/suivi" class="jr-filtres">'
+        '<div><label for="province">Province</label>'
+        '<select id="province" name="province" required>'
+        '<option value="" selected disabled>— Choisir —</option>'
+        + options_prov + '</select></div>'
+        '<div><label for="region">Région</label>'
+        '<select id="region" name="region" required disabled>'
+        '<option value="" selected disabled>—</option></select></div>'
+        '<div><label for="district">District</label>'
+        '<select id="district" name="district" required disabled>'
+        '<option value="" selected disabled>—</option></select></div>'
+        '<div style="align-self:end"><button type="submit" class="jr-btn" '
+        'style="margin-top:0">Afficher le suivi</button></div>'
+        '</form>'
+        f'<a class="jr-retour" href="{esc(accueil_role(role))}">'
+        '← Retour à mon espace</a>'
+        '</div></div>'
+        '<script>const GEO=' + json.dumps(ARBRE_GEO, ensure_ascii=False) + ';'
+        'var sp=document.getElementById("province"),'
+        'sr=document.getElementById("region"),sd=document.getElementById("district");'
+        'function vd(s,t){s.innerHTML=' + "'<option value=\"\" selected disabled>'+t+'</option>'"
+        + ';}'
+        'function rp(s,l,t){vd(s,t);(l||[]).forEach(function(o){'
+        'var e=document.createElement("option");e.value=o.c;e.textContent=o.n;'
+        's.appendChild(e);});s.disabled=!(l&&l.length);}'
+        'sp.addEventListener("change",function(){'
+        'rp(sr,GEO.regions[sp.value],"— Choisir —");vd(sd,"—");sd.disabled=true;});'
+        'sr.addEventListener("change",function(){'
+        'rp(sd,GEO.districts[sr.value],"— Choisir —");});'
+        '</script></body></html>')
 
 
 def _geo_reverse():
@@ -3383,19 +3446,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _journal_suivi_get(self, sess):
         """GET /journal/suivi : suivi de complétude du journal (Coordonnateurs +
-        Admin). Qui a écrit ou non son rapport, par jour, groupé par poste (et par
-        AXE pour Superviseur Technique / Logistique Inter-Communale). Borné au
-        périmètre du lecteur."""
+        Admin). Qui a écrit ou non son rapport, par jour, groupé par poste — et par
+        DISTRICT puis AXE pour Superviseur Technique / Logistique Inter-Communale.
+
+        Le Coordonnateur National / Admin (zone entière) doit d'abord CHOISIR un
+        district (cascade Province→Région→District) ; le Régional voit directement
+        ses districts affectés."""
         u = (sess or {}).get("utilisateur") or {}
         role = (u.get("responsabilite") or "").strip()
         if role not in _ROLES_JOURNAL_LECTURE:
             self._redirige(accueil_role(role))
             return
-        districts = perimetre(u)[0]              # None (tout) ou set de districts
-        perim = {str(x) for x in districts} if districts is not None else None
+        districts = perimetre(u)[0]              # None (zone entière) ou set
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        district_choisi = (q.get("district", [""])[0] or "").strip()
+
+        if districts is None:
+            # National / Admin : choix OBLIGATOIRE d'un district (gère toute la zone).
+            if not district_choisi.isdigit():
+                self._html(page_journal_suivi_choix(u))
+                return
+            districts_vue = {int(district_choisi)}
+        else:
+            districts_vue = {int(x) for x in districts}
+
+        perim = {str(x) for x in districts_vue}
         conn = db_source.connect()
         try:
-            # Membres suivis = comptes des rôles d'ÉCRITURE dans le périmètre.
             membres = []
             for a in utilisateurs.lister(conn):
                 if a.get("responsabilite") not in _ROLES_JOURNAL_ECRITURE:
@@ -3403,12 +3480,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 ds = {str(x) for x in (a.get("districts_affectation") or [])}
                 if a.get("district_affectation") is not None:
                     ds.add(str(a["district_affectation"]))
-                if perim is not None and not (ds & perim):
+                if not (ds & perim):
                     continue
+                a["_districts"] = ds
                 membres.append(a)
             dates_par_login = journal.dates_ecrites(
                 conn, [a["login"] for a in membres])
-            # Communes -> noms pour les rôles à axe (Sup. Tech / Log. Inter-Communale).
             cache = {}
             for a in membres:
                 if a.get("responsabilite") in _ROLES_DISTRICT_COMMUNES:
@@ -3418,39 +3495,61 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             cache[cc] = zones.libelle_commune(conn, cc) or str(cc)
                         noms.append(cache[cc])
                     a["communes_noms"] = noms
+            # Libellés des districts de la vue (pour les sous-titres par district).
+            libs = {}
+            for code in districts_vue:
+                lib = zones.libelles_district(conn, code)
+                libs[str(code)] = (lib[2] if lib else str(code))
         finally:
             conn.close()
 
-        # Dates suivies = union triée des jours réellement écrits par l'équipe.
         toutes = set()
         for s in dates_par_login.values():
             toutes |= s
         dates = sorted(toutes)
 
-        # Groupement par poste, puis par axe pour les rôles « district + communes ».
+        def _tri_membres(gens):
+            return sorted(gens, key=lambda a: (a.get("nom_prenom") or a["login"]))
+
+        # Groupement par poste ; pour les rôles « district + communes » :
+        # POSTE -> DISTRICT -> AXE -> membres. Sinon POSTE -> membres.
         groupes = []
         for poste in _ROLES_JOURNAL_ECRITURE:
             gens = [a for a in membres if a.get("responsabilite") == poste]
             if not gens:
                 continue
             if poste in _ROLES_DISTRICT_COMMUNES:
-                axes = {}
+                par_district = {}
                 for a in gens:
-                    noms = a.get("communes_noms") or [
-                        str(c) for c in (a.get("communes_affectation") or [])]
-                    axes.setdefault(tuple(noms), []).append(a)
-                sous = [(", ".join(k) if k else "(sans axe)",
-                         sorted(v, key=lambda a: (a.get("nom_prenom") or a["login"])))
-                        for k, v in sorted(
-                            axes.items(), key=lambda kv: [n.lower() for n in kv[0]])]
+                    # rôle mono-district : district_affectation, sinon 1er du périmètre
+                    dcode = (str(a.get("district_affectation"))
+                             if a.get("district_affectation") is not None
+                             else next(iter(a["_districts"] & perim), ""))
+                    par_district.setdefault(dcode, []).append(a)
+                blocs = []
+                for dcode in sorted(par_district, key=lambda c: libs.get(c, c)):
+                    axes = {}
+                    for a in par_district[dcode]:
+                        noms = a.get("communes_noms") or [
+                            str(c) for c in (a.get("communes_affectation") or [])]
+                        axes.setdefault(tuple(noms), []).append(a)
+                    axes_list = [(", ".join(k) if k else "(sans axe)", _tri_membres(v))
+                                 for k, v in sorted(
+                                     axes.items(),
+                                     key=lambda kv: [n.lower() for n in kv[0]])]
+                    blocs.append((libs.get(dcode, dcode), axes_list))
+                groupes.append((poste, "district", blocs))
             else:
-                sous = [(None, sorted(
-                    gens, key=lambda a: (a.get("nom_prenom") or a["login"])))]
-            groupes.append((poste, sous))
+                groupes.append((poste, "flat", _tri_membres(gens)))
 
-        portee = ("Tous les districts" if districts is None
-                  else "Vos districts affectés")
-        self._html(page_journal_suivi(u, groupes, dates, dates_par_login, portee))
+        if districts is None:
+            portee = "District : " + libs.get(str(next(iter(districts_vue))), "")
+            retour_choix = "/journal/suivi"
+        else:
+            portee = "Vos districts affectés"
+            retour_choix = None
+        self._html(page_journal_suivi(
+            u, groupes, dates, dates_par_login, portee, retour_choix))
 
     def _journal_post(self):
         """POST /journal : enregistre UNE entrée de journal (rôles d'écriture)."""
