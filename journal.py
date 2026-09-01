@@ -332,6 +332,22 @@ def activites(conn, districts=None, date_jour=None, login=None,
     return out
 
 
+def dates_ecrites(conn, logins=None):
+    """{login: ensemble des date_jour écrites} pour le suivi de complétude du
+    journal. `logins` : None = tous ; sinon restreint à cet ensemble de logins.
+    (On lit toute la table puis on filtre en Python -> pas de limite IN SQLite.)"""
+    cur = conn.cursor()
+    cur.execute('SELECT "login","date_jour" FROM "journal_activite"')
+    keep = set(logins) if logins is not None else None
+    out = {}
+    for lg, d in cur.fetchall():
+        if keep is not None and lg not in keep:
+            continue
+        if d:
+            out.setdefault(lg, set()).add(d)
+    return out
+
+
 def options_lecture(conn, districts=None):
     """Valeurs DISTINCTES présentes dans les journaux du périmètre (pour peupler
     les listes déroulantes des filtres de lecture) : {fonctions, zones, noms}.

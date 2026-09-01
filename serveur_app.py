@@ -811,6 +811,17 @@ def page_menu_operation(role: str, utilisateur=None) -> str:
             '<div class="d">Rédiger et envoyer une consigne à des rôles et des '
             'districts ciblés (ou à tout le monde).</div>'
             '<div class="go">Ouvrir →</div></a>')
+    # Carte « Suivi des rapports journaliers » — réservée aux Coordonnateurs :
+    # qui a écrit ou non son journal, par jour, par poste (et par axe).
+    if role in _ROLES_CONSIGNE_ENVOI:
+        cartes += (
+            '<a class="ca" href="/journal/suivi">'
+            '<div class="ic">🗓️</div>'
+            '<div class="t">Suivi des rapports journaliers</div>'
+            '<div class="d">Voir, pour chaque jour passé, si les équipes techniques '
+            'ont écrit leur rapport (par poste, et par axe pour les Superviseurs / '
+            'Logistiques Inter-Communales).</div>'
+            '<div class="go">Ouvrir →</div></a>')
     entete = (
         '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -1760,6 +1771,92 @@ def page_journal_historique(u, entrees, date_filtre, total) -> str:
         '<div class="jr-carte">'
         f'{pied}{lignes}'
         '<a class="jr-retour" href="/journal">← Retour à mon journal</a>'
+        '</div></div></body></html>')
+
+
+_STYLE_SUIVI = """
+  .sv-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:.85rem;margin:0 0 14px}
+  .sv-leg span{display:inline-flex;align-items:center;gap:6px}
+  .sv-pastille{width:16px;height:16px;border-radius:4px;display:inline-block}
+  .sv-wrap{overflow-x:auto;border:1px solid #e5ebf2;border-radius:12px}
+  table.sv{border-collapse:collapse;font-size:.8rem;min-width:100%}
+  table.sv th,table.sv td{border:1px solid #e9eef4;padding:5px 7px;text-align:center;
+    white-space:nowrap}
+  table.sv th{background:#f4f7fb;color:#33415a;font-weight:700;position:sticky;top:0}
+  table.sv th.nom,table.sv td.nom{text-align:left;position:sticky;left:0;z-index:2;
+    background:#fff;font-weight:600;min-width:190px;box-shadow:1px 0 0 #e5ebf2}
+  table.sv th.nom{background:#f4f7fb;z-index:3}
+  table.sv td.ok{background:#e8f7f0;color:#127a52;font-weight:800}
+  table.sv td.no{background:#fdecea;color:#c0392b}
+  table.sv td.tot{font-weight:800;background:#f7f9fc}
+  table.sv tr.grp td{background:#e7f0ff;font-weight:800;text-align:left;color:#1558c9;
+    position:sticky;left:0}
+  table.sv tr.axe td{background:#f7f9fc;font-style:italic;text-align:left;color:#5a6675}
+"""
+
+
+def page_journal_suivi(u, groupes, dates, dates_par_login, portee) -> str:
+    """Suivi de complétude du journal (Coordonnateurs + Admin) : tableau
+    membres × dates (✓ écrit / ✗ non), groupé par poste — et par AXE pour les
+    Superviseurs Techniques et Logistiques Inter-Communales. `groupes` =
+    [(poste, [(axe|None, [membre...])])] ; `dates` = liste triée de date_jour."""
+    esc = htmllib.escape
+    role = (u.get("responsabilite") or "").strip()
+    retour = accueil_role(role)
+    ndates = len(dates)
+    ncols = ndates + 2                       # nom + dates + total
+
+    def _court(d):                            # 'YYYY-MM-DD' -> 'JJ/MM'
+        return f"{d[8:10]}/{d[5:7]}" if len(d) >= 10 else d
+
+    if not dates or not groupes:
+        corps = ('<p class="jr-vide">Aucun rapport journalier n’a encore été écrit '
+                 'par les équipes de votre périmètre.</p>')
+    else:
+        entete = ('<tr><th class="nom">Membre</th>'
+                  + "".join(f'<th title="{esc(journal.fmt_jour(d))}">{esc(_court(d))}</th>'
+                            for d in dates)
+                  + '<th>Total</th></tr>')
+        lignes = []
+        dates_set = set(dates)
+        for poste, sous in groupes:
+            lignes.append(f'<tr class="grp"><td colspan="{ncols}">📋 {esc(poste)}</td></tr>')
+            for axe, membres in sous:
+                if axe is not None:
+                    lignes.append('<tr class="axe"><td colspan="'
+                                  f'{ncols}">Axe : {esc(axe)}</td></tr>')
+                for m in membres:
+                    nom = esc((m.get("nom_prenom") or m.get("login") or "").strip())
+                    ecrites = dates_par_login.get(m["login"], set())
+                    cells = "".join(
+                        (f'<td class="ok" title="{esc(journal.fmt_jour(d))}">✓</td>'
+                         if d in ecrites
+                         else f'<td class="no" title="{esc(journal.fmt_jour(d))}">✗</td>')
+                        for d in dates)
+                    n = len(ecrites & dates_set)
+                    lignes.append(f'<tr><td class="nom">{nom}</td>{cells}'
+                                  f'<td class="tot">{n}/{ndates}</td></tr>')
+        corps = ('<div class="sv-leg">'
+                 '<span><i class="sv-pastille" style="background:#e8f7f0;'
+                 'border:1px solid #b8e6d2"></i> ✓ a écrit son journal ce jour</span>'
+                 '<span><i class="sv-pastille" style="background:#fdecea;'
+                 'border:1px solid #f0cfca"></i> ✗ n’a pas écrit</span></div>'
+                 '<div class="sv-wrap"><table class="sv">'
+                 f'<thead>{entete}</thead><tbody>{"".join(lignes)}</tbody>'
+                 '</table></div>')
+
+    return (
+        '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>RSU 2026 — Suivi des rapports journaliers</title>'
+        f'<style>{_STYLE_JOURNAL}{_STYLE_SUIVI}</style></head>'
+        '<body><div class="jr-wrap" style="max-width:1200px"><div class="jr-carte">'
+        '<h1>🗓️ Suivi des rapports journaliers</h1>'
+        f'<p class="jr-sous">{esc(portee)} — par poste (et par axe pour les '
+        'Superviseurs Techniques et Logistiques Inter-Communales). '
+        f'{ndates} date(s) suivie(s).</p>'
+        f'{corps}'
+        f'<a class="jr-retour" href="{esc(retour)}">← Retour à mon espace</a>'
         '</div></div></body></html>')
 
 
@@ -2743,6 +2840,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if chemin == "/journal/historique":
             self._journal_historique_get(sess)
             return
+        # Suivi de complétude du journal (Coordonnateurs + Admin) : qui a écrit ou
+        # non, par poste (par axe pour Sup. Technique / Logistique Inter-Communale).
+        if chemin == "/journal/suivi":
+            self._journal_suivi_get(sess)
+            return
 
         # Consignes / instructions : réception (tous rôles) + rédaction (les deux
         # Coordonnateurs). Placé AVANT les gardes de rôle (accessible à tous).
@@ -3278,6 +3380,77 @@ class Handler(http.server.BaseHTTPRequestHandler):
         entrees = ([e for e in toutes if e.get("date_jour") == date_f]
                    if date_f else toutes)
         self._html(page_journal_historique(u, entrees, date_f, total=len(toutes)))
+
+    def _journal_suivi_get(self, sess):
+        """GET /journal/suivi : suivi de complétude du journal (Coordonnateurs +
+        Admin). Qui a écrit ou non son rapport, par jour, groupé par poste (et par
+        AXE pour Superviseur Technique / Logistique Inter-Communale). Borné au
+        périmètre du lecteur."""
+        u = (sess or {}).get("utilisateur") or {}
+        role = (u.get("responsabilite") or "").strip()
+        if role not in _ROLES_JOURNAL_LECTURE:
+            self._redirige(accueil_role(role))
+            return
+        districts = perimetre(u)[0]              # None (tout) ou set de districts
+        perim = {str(x) for x in districts} if districts is not None else None
+        conn = db_source.connect()
+        try:
+            # Membres suivis = comptes des rôles d'ÉCRITURE dans le périmètre.
+            membres = []
+            for a in utilisateurs.lister(conn):
+                if a.get("responsabilite") not in _ROLES_JOURNAL_ECRITURE:
+                    continue
+                ds = {str(x) for x in (a.get("districts_affectation") or [])}
+                if a.get("district_affectation") is not None:
+                    ds.add(str(a["district_affectation"]))
+                if perim is not None and not (ds & perim):
+                    continue
+                membres.append(a)
+            dates_par_login = journal.dates_ecrites(
+                conn, [a["login"] for a in membres])
+            # Communes -> noms pour les rôles à axe (Sup. Tech / Log. Inter-Communale).
+            cache = {}
+            for a in membres:
+                if a.get("responsabilite") in _ROLES_DISTRICT_COMMUNES:
+                    noms = []
+                    for cc in (a.get("communes_affectation") or []):
+                        if cc not in cache:
+                            cache[cc] = zones.libelle_commune(conn, cc) or str(cc)
+                        noms.append(cache[cc])
+                    a["communes_noms"] = noms
+        finally:
+            conn.close()
+
+        # Dates suivies = union triée des jours réellement écrits par l'équipe.
+        toutes = set()
+        for s in dates_par_login.values():
+            toutes |= s
+        dates = sorted(toutes)
+
+        # Groupement par poste, puis par axe pour les rôles « district + communes ».
+        groupes = []
+        for poste in _ROLES_JOURNAL_ECRITURE:
+            gens = [a for a in membres if a.get("responsabilite") == poste]
+            if not gens:
+                continue
+            if poste in _ROLES_DISTRICT_COMMUNES:
+                axes = {}
+                for a in gens:
+                    noms = a.get("communes_noms") or [
+                        str(c) for c in (a.get("communes_affectation") or [])]
+                    axes.setdefault(tuple(noms), []).append(a)
+                sous = [(", ".join(k) if k else "(sans axe)",
+                         sorted(v, key=lambda a: (a.get("nom_prenom") or a["login"])))
+                        for k, v in sorted(
+                            axes.items(), key=lambda kv: [n.lower() for n in kv[0]])]
+            else:
+                sous = [(None, sorted(
+                    gens, key=lambda a: (a.get("nom_prenom") or a["login"])))]
+            groupes.append((poste, sous))
+
+        portee = ("Tous les districts" if districts is None
+                  else "Vos districts affectés")
+        self._html(page_journal_suivi(u, groupes, dates, dates_par_login, portee))
 
     def _journal_post(self):
         """POST /journal : enregistre UNE entrée de journal (rôles d'écriture)."""

@@ -1219,6 +1219,17 @@ après arrêt de l'instance de test, systemd a repris le port et l'app est stabl
     les gardes ; un lecteur y est renvoyé vers `/journal`) : page dédiée qui affiche
     **TOUTES** ses entrées (`mes_activites(limite=1000000)`) avec le **total** et un
     **filtre par date**. Testé (COPIE) : total exact, filtre date, redirection lecteur.
+  - **SUIVI de complétude** (`/journal/suivi`, `_ROLES_JOURNAL_LECTURE`, **carte sur
+    le menu Coordonnateur**) : tableau **membres × dates** (✓ a écrit / ✗ non) pour voir,
+    chaque jour passé, qui a rempli son rapport. **Groupé par POSTE**, et **par AXE**
+    (communes) pour **Superviseur Technique** et **Logistique Inter-Communale**
+    (`_ROLES_DISTRICT_COMMUNES`). Membres suivis = comptes des rôles d'ÉCRITURE
+    (`_ROLES_JOURNAL_ECRITURE`) **dans le périmètre** (National = tous, Régional = ses
+    districts). Colonnes de dates = **union triée des jours réellement écrits**
+    (`journal.dates_ecrites(logins)`), total par membre `n/N`. `page_journal_suivi` :
+    tableau à défilement horizontal, 1re colonne (nom) figée. Testé (COPIE) : groupes
+    par poste, sous-groupes par axe, ✓/✗ et totaux exacts (jtrait 2/5, jexp 1/5,
+    jcomite 0/5), périmètre respecté (district hors périmètre exclu pour le Régional).
   - **LECTURE** (`_ROLES_JOURNAL_LECTURE` = Coordonnateur Nationale, Coordonnateur
     régionale, Admin) : page « Journaux des équipes » (`page_journal_lecture`) —
     liste **bornée au périmètre** (`journal.activites(districts=perimetre(u)[0])` :
