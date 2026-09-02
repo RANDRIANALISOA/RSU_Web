@@ -5,7 +5,7 @@
   /* Base fluide : ~16px sur poste standard (>=1200px), réduite sur petits
      écrans, un peu plus grande sur très grands. Toutes les tailles ci-dessous
      sont en rem -> elles suivent cette base et s'adaptent à chaque écran. */
-  font-size: clamp(12.5px, 0.3vw + 11.7px, 17px);
+  font-size: clamp(12px, 0.22vw + 10.2px, 14px);
   --bg:        #f0f2f7;
   --surface:   #ffffff;
   --surface2:  #f8f9fc;
@@ -129,6 +129,28 @@ tbody td { padding:0.5625rem 0.875rem; vertical-align:middle; }
 .page.active > * { animation:fadeUp 0.25s ease both; }
 /* Écrans intermédiaires (portables ~1024px) : barre latérale plus étroite,
    graphiques sur une colonne pour éviter le tassement. */
-@media(max-width:1024px){ .sidebar{width:13.5rem;min-width:13.5rem;} .charts-grid{grid-template-columns:1fr;} .page{padding:1.25rem 1.25rem;} }
-@media(max-width:768px){ .sidebar{width:12.5rem;min-width:12.5rem;} .page{padding:1rem;} .topbar{padding:0.75rem 1rem;} .kpi-grid{grid-template-columns:repeat(2,1fr);} .charts-grid{grid-template-columns:1fr;} }
+@media(max-width:1024px){ .sidebar{width:13rem;min-width:13rem;} .charts-grid{grid-template-columns:1fr;} .page{padding:1.25rem;} }
+/* <= 860px (tablettes / SMARTPHONES) : on ABANDONNE le gabarit « application
+   plein écran » (barre latérale fixe + zone à défilement interne) au profit d'un
+   DÉFILEMENT NATUREL de toute la page. Sinon la barre latérale à largeur fixe
+   mange l'écran du téléphone et une partie du contenu reste invisible. La barre
+   passe en HAUT, compacte (hauteur limitée, défilante), le contenu vient dessous,
+   et toute la page défile normalement -> tout est visible. */
+@media(max-width:860px){
+  html,body{height:auto;overflow:auto;}
+  body{flex-direction:column;}
+  .sidebar{width:100%;min-width:0;height:auto;max-height:42vh;flex-direction:column;padding:0.75rem;}
+  .nav-sub{max-height:none;}
+  .main{height:auto;overflow:visible;}
+  .topbar{position:static;}
+  .page{padding:1rem;}
+  .kpi-grid{grid-template-columns:repeat(2,1fr);}
+  .charts-grid{grid-template-columns:1fr;}
+  #map{height:60vh;min-height:16rem;}
+}
+@media(max-width:480px){
+  .kpi-grid{grid-template-columns:1fr;}
+  .page{padding:0.75rem;}
+  .topbar{flex-wrap:wrap;}
+}
 @media print{ .sidebar,.topbar-actions,.ar-tabs,.table-toolbar,.export-bar{display:none!important;} .main{height:auto;overflow:visible;} .page{display:block!important;padding:0;} body{overflow:visible;} html,body{height:auto;} }

@@ -529,7 +529,7 @@ def page_login(erreur: bool = False) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Connexion</title>
 <style>
-:root{--rsu-fluid:1;font-size:clamp(12.5px, 0.3vw + 11.7px, 17px);}
+:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
 
   *{box-sizing:border-box}
   :root{--bleu:#1b6ef3;--bleu-f:#1558c9;--vert:#17a398;--nuit:#0d2b4e;--texte:#1c2430}
@@ -978,7 +978,7 @@ def page_selection(erreur: str = "", utilisateur=None, op=None) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Zone & type de suivi</title>
 <style>
-:root{--rsu-fluid:1;font-size:clamp(12.5px, 0.3vw + 11.7px, 17px);}
+:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
 
   *{box-sizing:border-box}
   :root{--bleu:#1b6ef3;--bleu-f:#1558c9;--vert:#17a398;--nuit:#0d2b4e;--texte:#1c2430}
@@ -1340,7 +1340,7 @@ def page_equipe_technique(sel: dict, equipes, retour_href="/",
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Équipe technique</title>
 <style>
-:root{--rsu-fluid:1;font-size:clamp(12.5px, 0.3vw + 11.7px, 17px);}
+:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
 
   *{box-sizing:border-box}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
@@ -1502,7 +1502,7 @@ def page_motdepasse(erreur: str = "", succes: bool = False, sess=None) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Mon mot de passe</title>
 <style>
-:root{--rsu-fluid:1;font-size:clamp(12.5px, 0.3vw + 11.7px, 17px);}
+:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
 
   *{box-sizing:border-box}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
@@ -1624,7 +1624,7 @@ def _journal_zone(conn, u):
 
 
 _STYLE_JOURNAL = """
-:root{--rsu-fluid:1;font-size:clamp(12.5px, 0.3vw + 11.7px, 17px);}
+:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
   *{box-sizing:border-box}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
     min-height:100vh;background:#eef2f7;line-height:1.5;padding:5.25rem 1.25rem 3rem}
