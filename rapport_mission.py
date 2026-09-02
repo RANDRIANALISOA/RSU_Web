@@ -19,6 +19,7 @@ pas prise : cf. CLAUDE.md).
 import datetime
 import html as htmllib
 import os
+import re
 import unicodedata
 
 import journal
@@ -240,10 +241,12 @@ def _sec(num, titre, corps):
     return f'<div class="rm-h2">{num}. {htmllib.escape(titre)}</div>{corps}'
 
 
-def rendu_html(rapport, perimetre_label, retour_href, ia_html=""):
+def rendu_html(rapport, perimetre_label, retour_href, ia_html="", ia_href=""):
     esc = htmllib.escape
     r = rapport
     s = r["stats"]
+    bouton_ia = (f'<a class="rm-btn" href="{esc(ia_href)}">🤖 Version rédigée par IA</a>'
+                 if ia_href else "")
 
     kpis = (
         '<div class="rm-kpis">'
@@ -328,6 +331,7 @@ def rendu_html(rapport, perimetre_label, retour_href, ia_html=""):
         f'<style>{_STYLE}</style></head><body><div class="rm-wrap">'
         '<div class="rm-bar rm-noprint"><h1>Rapport de mission</h1>'
         f'<a class="rm-btn sec" href="{esc(retour_href)}">← Retour</a>'
+        f'{bouton_ia}'
         '<button class="rm-btn" onclick="window.print()">🖨 Imprimer / PDF</button></div>'
         '<div class="rm-note rm-noprint">📋 <strong>Compilation automatique</strong> '
         '(aucune IA, aucune donnée envoyée à l\'extérieur). Les sections <em>Introduction</em>, '
@@ -379,13 +383,27 @@ def page_formulaire(debut_defaut, fin_defaut, districts_dispo, action, retour_hr
 # Le PLAN imposé à l'IA est celui du rapport ci-dessus (sections 1 à 6, en français).
 # ---------------------------------------------------------------------------
 _SYSTEM_IA = (
-    "Tu es chargé de rédiger, EN FRANÇAIS, le rapport de mission du Registre Social "
-    "Unique (RSU) 2026 de l'INSTAT (Madagascar), à partir des journaux de bord "
-    "quotidiens fournis. Rédige un texte clair, professionnel et factuel, en suivant "
-    "EXACTEMENT ce plan : 1. Introduction ; 2. Concept et justification ; 3. Déroulement "
-    "de la mission ; 4. Problèmes rencontrés et solutions adoptées ; 5. Itinéraire ; "
-    "6. Conclusion. Ne invente aucun fait : appuie-toi uniquement sur les journaux. "
-    "Reste synthétique et structuré."
+    "Tu es chargé de rédiger, EN FRANÇAIS, un RAPPORT DE MISSION complet et "
+    "professionnel pour le programme Registre Social Unique (RSU) 2026 de l'INSTAT "
+    "(Madagascar), à partir des journaux de bord quotidiens fournis.\n\n"
+    "Consignes :\n"
+    "- N'invente AUCUN fait ni chiffre : appuie-toi UNIQUEMENT sur les journaux "
+    "fournis. Si une information manque, ne l'invente pas.\n"
+    "- Écris au format MARKDOWN (titres #, ##, ###, listes, tableaux quand c'est "
+    "utile), un texte fluide, structuré et factuel.\n"
+    "- Parle des « équipes » et « binômes » plutôt que de personnes nommées (les "
+    "noms ne sont volontairement pas fournis).\n"
+    "- Reprends les chiffres présents dans les journaux (nombres de dossiers, "
+    "candidats, doublons…) et SIGNALE les écarts éventuels à vérifier.\n"
+    "- Structure recommandée (adapte-la au contenu réel des journaux) : un en-tête "
+    "(titre, période, zones d'intervention, activité principale), puis : "
+    "1. Introduction ; 2. Objectifs de la mission ; 3. Déroulement de la mission "
+    "(par phase et/ou par district) ; 4. Réception, dépouillement et traitement des "
+    "dossiers ; 5. Apurement et sélection ; 6. Préparation et organisation ; "
+    "7. Coordination et communication ; 8. Difficultés rencontrées ; 9. Solutions et "
+    "mesures d'adaptation ; 10. Résultats obtenus ; 11. Synthèse par district "
+    "(tableau) ; 12. Appréciation générale ; 13. Recommandations ; 14. Conclusion.\n"
+    "- Reste synthétique tout en étant complet."
 )
 
 
@@ -395,20 +413,186 @@ def ia_active() -> bool:
             and bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()))
 
 
-def synthese_ia(rapport):
-    """(À BRANCHER) rédige les sections narratives via l'API Claude, selon _SYSTEM_IA.
+def _journaux_en_texte(rapport, perimetre_label):
+    """Met en forme les journaux pour l'IA — SANS les noms des personnes (seulement
+    date, fonction, district et texte)."""
+    lignes = [
+        f"Période : du {rapport['debut']} au {rapport['fin']}.",
+        f"Périmètre : {perimetre_label}.",
+        "Districts concernés : "
+        + (", ".join(d["nom"] for d in rapport["districts"]) or "—") + ".",
+        "",
+        "JOURNAUX DE BORD (noms des personnes volontairement omis) :",
+    ]
+    for d in rapport["districts"]:
+        items = []
+        for f in d["fonctions"]:
+            for p in f["personnes"]:
+                for e in p["entrees"]:
+                    items.append((e.get("date_jour") or "",
+                                  e.get("fonction") or f["fonction"],
+                                  (e.get("journal") or "").strip()))
+        items.sort(key=lambda x: x[0])
+        lignes.append("")
+        lignes.append(f"=== District de {d['nom']} ({d['code']}) ===")
+        for dj, fct, txt in items:
+            if txt:
+                lignes.append(f"[{dj}] ({fct}) {txt}")
+    return "\n".join(lignes)
 
-    Volontairement NON implémentée tant que la décision de confidentialité (envoi des
-    journaux à l'API) n'est pas prise. Squelette :
 
-        import anthropic
-        client = anthropic.Anthropic()                 # clé via ANTHROPIC_API_KEY
-        contenu = _journaux_en_texte(rapport)          # journaux mis en forme
-        msg = client.messages.create(
-            model="claude-opus-5", max_tokens=8000,
-            system=_SYSTEM_IA,
-            messages=[{"role": "user", "content": contenu}],
-        )
-        return msg.content[0].text
-    """
-    raise NotImplementedError("Synthèse IA non activée (décision de confidentialité requise).")
+def synthese_ia(rapport, perimetre_label):
+    """Rédige le rapport (Markdown) via l'API Claude (modèle Opus 5), à partir des
+    journaux SANS noms. Lève une exception explicite si la clé/le réseau échoue."""
+    import anthropic  # dépendance serveur (pip install anthropic)
+    client = anthropic.Anthropic()  # clé via ANTHROPIC_API_KEY
+    contenu = ("Rédige le rapport de mission à partir des journaux de bord "
+               "ci-dessous.\n\n" + _journaux_en_texte(rapport, perimetre_label))
+    # Streaming (sortie longue) + réflexion adaptive ; on récupère le message final.
+    with client.messages.stream(
+        model="claude-opus-5",
+        max_tokens=20000,
+        thinking={"type": "adaptive"},
+        system=_SYSTEM_IA,
+        messages=[{"role": "user", "content": contenu}],
+    ) as stream:
+        msg = stream.get_final_message()
+    if getattr(msg, "stop_reason", None) == "refusal":
+        raise RuntimeError("La génération a été déclinée par le modèle.")
+    return "".join(b.text for b in msg.content
+                   if getattr(b, "type", "") == "text").strip()
+
+
+# --- Markdown -> HTML (petit convertisseur, sans dépendance) --------------------
+def _md_inline(t):
+    t = htmllib.escape(t)
+    t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
+    t = re.sub(r"(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)", r"<em>\1</em>", t)
+    return t
+
+
+def _md_table(rows):
+    cells = [[c.strip() for c in r.strip().strip("|").split("|")] for r in rows]
+    header = cells[0]
+    body = cells[1:]
+    if len(cells) > 1 and all(set(c) <= set("-: ") and c for c in cells[1]):
+        body = cells[2:]
+    th = "".join(f"<th>{_md_inline(c)}</th>" for c in header)
+    trs = "".join("<tr>" + "".join(f"<td>{_md_inline(c)}</td>" for c in r) + "</tr>"
+                  for r in body)
+    return f'<table class="rm-tab"><tr>{th}</tr>{trs}</table>'
+
+
+def markdown_html(md):
+    lines = (md or "").replace("\r\n", "\n").split("\n")
+    out, para = [], []
+    i, n = 0, len(lines)
+
+    def flush():
+        if para:
+            out.append("<p>" + " ".join(_md_inline(x) for x in para) + "</p>")
+            para.clear()
+
+    while i < n:
+        s = lines[i].strip()
+        if s.startswith("|") and s.count("|") >= 2:
+            flush()
+            tbl = []
+            while i < n and lines[i].strip().startswith("|"):
+                tbl.append(lines[i].strip())
+                i += 1
+            out.append(_md_table(tbl))
+            continue
+        m = re.match(r"^(#{1,6})\s+(.*)$", s)
+        if m:
+            flush()
+            out.append(f"<h{min(len(m.group(1)) + 1, 4)}>{_md_inline(m.group(2))}"
+                       f"</h{min(len(m.group(1)) + 1, 4)}>")
+            i += 1
+            continue
+        if re.match(r"^(-{3,}|\*{3,}|_{3,})$", s):
+            flush()
+            out.append("<hr>")
+            i += 1
+            continue
+        ol = re.match(r"^\d+[.)]\s+(.*)$", s)
+        ul = re.match(r"^[-*]\s+(.*)$", s)
+        if ol or ul:
+            flush()
+            tag = "ol" if ol else "ul"
+            items = []
+            while i < n:
+                ss = lines[i].strip()
+                mm = (re.match(r"^\d+[.)]\s+(.*)$", ss) if tag == "ol"
+                      else re.match(r"^[-*]\s+(.*)$", ss))
+                if not mm:
+                    break
+                items.append(f"<li>{_md_inline(mm.group(1))}</li>")
+                i += 1
+            out.append(f"<{tag}>" + "".join(items) + f"</{tag}>")
+            continue
+        if s == "":
+            flush()
+            i += 1
+            continue
+        para.append(s)
+        i += 1
+    flush()
+    return "".join(out)
+
+
+def rendu_ia(rapport, perimetre_label, retour_href, markdown):
+    """Page du rapport RÉDIGÉ PAR IA (Markdown converti en HTML)."""
+    esc = htmllib.escape
+    corps = markdown_html(markdown)
+    return (
+        '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>RSU 2026 — Rapport de mission (IA)</title>'
+        f'<style>{_STYLE}</style></head><body><div class="rm-wrap">'
+        '<div class="rm-bar rm-noprint"><h1>Rapport de mission — version IA</h1>'
+        f'<a class="rm-btn sec" href="{esc(retour_href)}">← Retour</a>'
+        '<button class="rm-btn" onclick="window.print()">🖨 Imprimer / PDF</button></div>'
+        '<div class="rm-note rm-noprint">🤖 <strong>Rédigé par IA</strong> à partir des '
+        'journaux de bord (sans les noms des personnes). '
+        f'Période {esc(rapport["debut"])} → {esc(rapport["fin"])} · {esc(perimetre_label)} · '
+        f'généré le {esc(rapport["genere_le"])}. '
+        '<span class="rm-edit">À relire et valider avant diffusion.</span></div>'
+        f'<div class="rm-doc">{corps}</div>'
+        '</div></body></html>')
+
+
+def page_ia_inactive(retour_href):
+    esc = htmllib.escape
+    return (
+        '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>RSU 2026 — Rapport de mission (IA)</title>'
+        f'<style>{_STYLE}</style></head><body><div class="rm-wrap">'
+        '<div class="rm-bar"><h1>Rapport de mission — version IA</h1>'
+        f'<a class="rm-btn sec" href="{esc(retour_href)}">← Retour</a></div>'
+        '<div class="rm-doc"><div class="rm-h2">Fonction IA non activée</div>'
+        '<p class="rm-p">La génération par IA est désactivée. Pour l\'activer sur le '
+        'serveur (après décision de confidentialité) :</p>'
+        '<ol><li>installer le SDK : <code>pip install anthropic</code> ;</li>'
+        '<li>définir la clé : variable d\'environnement <code>ANTHROPIC_API_KEY</code> ;</li>'
+        '<li>activer : <code>RSU_IA_RAPPORT=1</code> ;</li>'
+        '<li>redémarrer le service.</li></ol>'
+        '<p class="rm-p">En attendant, la <strong>compilation hors-ligne</strong> reste '
+        'disponible (bouton « Retour »).</p></div></div></body></html>')
+
+
+def page_ia_erreur(message, retour_href):
+    esc = htmllib.escape
+    return (
+        '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>RSU 2026 — Rapport de mission (IA)</title>'
+        f'<style>{_STYLE}</style></head><body><div class="rm-wrap">'
+        '<div class="rm-bar"><h1>Rapport de mission — version IA</h1>'
+        f'<a class="rm-btn sec" href="{esc(retour_href)}">← Retour</a></div>'
+        '<div class="rm-doc"><div class="rm-h2">La génération a échoué</div>'
+        f'<p class="rm-p">Détail : {esc(message)}</p>'
+        '<p class="rm-p">Vérifiez la clé API, l\'accès Internet du serveur, puis '
+        'réessayez. La compilation hors-ligne reste disponible.</p></div>'
+        '</div></body></html>')

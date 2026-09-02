@@ -2977,6 +2977,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if chemin == "/rapport-mission":
             self._rapport_mission_get(sess)
             return
+        # Version RÉDIGÉE PAR IA du rapport de mission (mêmes gardes/périmètre).
+        # Ne s'exécute que si l'IA est activée (clé API + RSU_IA_RAPPORT=1).
+        if chemin == "/rapport-mission/ia":
+            self._rapport_mission_ia_get(sess)
+            return
 
         # Consignes / instructions : réception (tous rôles) + rédaction (les deux
         # Coordonnateurs). Placé AVANT les gardes de rôle (accessible à tous).
@@ -3459,8 +3464,54 @@ class Handler(http.server.BaseHTTPRequestHandler):
             rapport = rapport_mission.synthese_locale(conn, debut, fin, districts_eff)
         finally:
             conn.close()
+        params = {"debut": debut, "fin": fin}
+        if district_f:
+            params["district"] = district_f
+        ia_href = "/rapport-mission/ia?" + urllib.parse.urlencode(params)
         self._html(rapport_mission.rendu_html(
-            rapport, perim_label, retour_href="/rapport-mission"))
+            rapport, perim_label, retour_href="/rapport-mission", ia_href=ia_href))
+
+    def _rapport_mission_ia_get(self, sess):
+        """GET /rapport-mission/ia : rapport RÉDIGÉ PAR IA (API Claude), mêmes gardes
+        et périmètre que /rapport-mission. Ne fait rien sortir tant que l'IA n'est pas
+        explicitement activée (ia_active())."""
+        u = (sess or {}).get("utilisateur") or {}
+        role = (u.get("responsabilite") or "").strip()
+        if role not in _ROLES_JOURNAL_LECTURE:
+            self._redirige(accueil_role(role))
+            return
+        if not rapport_mission.ia_active():
+            self._html(rapport_mission.page_ia_inactive("/rapport-mission"))
+            return
+        districts = perimetre(u)[0]
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+
+        def _val(cle):
+            return (q.get(cle, [""])[0] or "").strip()
+
+        debut, fin, district_f = _val("debut"), _val("fin"), _val("district")
+        if not debut or not fin:
+            self._redirige("/rapport-mission")
+            return
+        if district_f and districts is not None and district_f not in {str(d) for d in districts}:
+            district_f = ""
+        conn = db_source.connect()
+        try:
+            if district_f:
+                districts_eff = {district_f}
+                perim_label = district_f
+            else:
+                districts_eff = districts
+                perim_label = "Tous mes districts" if districts else "Tous les districts"
+            rapport = rapport_mission.synthese_locale(conn, debut, fin, districts_eff)
+        finally:
+            conn.close()
+        try:
+            markdown = rapport_mission.synthese_ia(rapport, perim_label)
+        except Exception as e:
+            self._html(rapport_mission.page_ia_erreur(str(e), "/rapport-mission"))
+            return
+        self._html(rapport_mission.rendu_ia(rapport, perim_label, "/rapport-mission", markdown))
 
     def _journal_get(self, sess):
         """GET /journal : page d'ÉCRITURE (équipe technique) ou de LECTURE
