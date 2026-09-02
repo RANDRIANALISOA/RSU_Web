@@ -52,6 +52,7 @@ import prechargement
 import limites_db
 import manuel
 import consignes
+import rapport_mission
 
 PORT = 8000
 
@@ -821,6 +822,16 @@ def page_menu_operation(role: str, utilisateur=None) -> str:
             '<div class="d">Voir, pour chaque jour passé, si les équipes techniques '
             'ont écrit leur rapport (par poste, et par axe pour les Superviseurs / '
             'Logistiques Inter-Communales).</div>'
+            '<div class="go">Ouvrir →</div></a>')
+    # Carte « Rapport de mission » — compilation (hors-ligne) des journaux de bord
+    # en un rapport structuré. Réservée aux rôles de LECTURE (Coordonnateurs + Admin).
+    if role in _ROLES_JOURNAL_LECTURE:
+        cartes += (
+            '<a class="ca" href="/rapport-mission">'
+            '<div class="ic">📄</div>'
+            '<div class="t">Rapport de mission</div>'
+            '<div class="d">Compiler les journaux de bord d\'une période en un '
+            'rapport structuré (district / fonction / personne), imprimable.</div>'
             '<div class="go">Ouvrir →</div></a>')
     entete = (
         '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
@@ -2961,6 +2972,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if chemin == "/journal/suivi":
             self._journal_suivi_get(sess)
             return
+        # Rapport de mission : synthèse (HORS-LIGNE) des journaux de bord sur une
+        # période. Réservé aux rôles de LECTURE du journal (Coordonnateurs + Admin).
+        if chemin == "/rapport-mission":
+            self._rapport_mission_get(sess)
+            return
 
         # Consignes / instructions : réception (tous rôles) + rédaction (les deux
         # Coordonnateurs). Placé AVANT les gardes de rôle (accessible à tous).
@@ -3403,6 +3419,49 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # -----------------------------------------------------------------------
     # Journal de bord (activités quotidiennes)
     # -----------------------------------------------------------------------
+    def _rapport_mission_get(self, sess):
+        """GET /rapport-mission : formulaire (sans période) ou rapport compilé
+        HORS-LIGNE des journaux. Réservé aux rôles de LECTURE du journal
+        (Coordonnateurs + Admin) ; borné au périmètre du rôle. Liens NON préfixés
+        (préfixés par _html/_prefixer)."""
+        u = (sess or {}).get("utilisateur") or {}
+        role = (u.get("responsabilite") or "").strip()
+        if role not in _ROLES_JOURNAL_LECTURE:
+            self._redirige(accueil_role(role))
+            return
+        districts = perimetre(u)[0]        # None = tous ; set = ses districts
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+
+        def _val(cle):
+            return (q.get(cle, [""])[0] or "").strip()
+
+        debut, fin, district_f = _val("debut"), _val("fin"), _val("district")
+        # District choisi borné au périmètre (un district hors périmètre est ignoré).
+        if district_f and districts is not None and district_f not in {str(d) for d in districts}:
+            district_f = ""
+        conn = db_source.connect()
+        try:
+            if not debut or not fin:
+                tous = zones.tous_districts(conn)
+                if districts is not None:
+                    perim = {str(d) for d in districts}
+                    tous = [d for d in tous if d["code"] in perim]
+                self._html(rapport_mission.page_formulaire(
+                    config.DATE_DEBUT_MISSION, journal.aujourdhui(), tous,
+                    action="/rapport-mission", retour_href=accueil_role(role)))
+                return
+            if district_f:
+                districts_eff = {district_f}
+                perim_label = district_f
+            else:
+                districts_eff = districts
+                perim_label = "Tous mes districts" if districts else "Tous les districts"
+            rapport = rapport_mission.synthese_locale(conn, debut, fin, districts_eff)
+        finally:
+            conn.close()
+        self._html(rapport_mission.rendu_html(
+            rapport, perim_label, retour_href="/rapport-mission"))
+
     def _journal_get(self, sess):
         """GET /journal : page d'ÉCRITURE (équipe technique) ou de LECTURE
         (coordonnateurs + Admin), selon le rôle. Les autres rôles sont renvoyés
