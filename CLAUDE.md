@@ -1408,6 +1408,63 @@ après arrêt de l'instance de test, systemd a repris le port et l'app est stabl
     Contact + en-tête CSV `sexe`. **Redémarrage du service requis** (applique la
     migration `sexe` + sert `/profil`).
 
+### Mises à jour ultérieures (2026-09-02)
+
+- **RAPPORT DE MISSION IA — accès restreint + export WORD illustré** (`rapport_word.py`
+  nouveau ; `rapport_mission.py` + `serveur_app.py`). Le rapport de mission **rédigé par
+  IA** (`/rapport-mission/ia`) est désormais :
+  - **RÉSERVÉ à deux LOGINS** (et non à un rôle) : `serveur_app.LOGINS_RAPPORT_IA =
+    {"COORDOREG_01", "COORDOREG_02"}` (les deux Coordonnateurs régionaux), testé via
+    `peut_rapport_ia(u)`. **Le National ET l'Admin PERDENT l'accès au rapport IA** (demande
+    utilisateur). La **compilation HORS-LIGNE** `/rapport-mission` reste, elle, ouverte aux
+    rôles de lecture (`_ROLES_JOURNAL_LECTURE`) ; seul le **bouton « Rapport rédigé par IA
+    (Word) »** est masqué pour les non-autorisés (`ia_href=""` si `not peut_rapport_ia`).
+    Pour ouvrir à un futur `COORDOREG_03` : l'ajouter à `LOGINS_RAPPORT_IA`.
+  - **LIVRÉ EN WORD (.docx)** directement, plus en page HTML. Comme la génération IA dure
+    1-2 min et que le streaming existe pour éviter le **504** proxy, le flux est :
+    `/rapport-mission/ia` (GET) affiche la **page de progression EN FLUX** (heartbeats)
+    pendant que l'IA rédige, puis — la rédaction finie — injecte le Markdown dans un
+    **formulaire caché auto-soumis** (`rapport_mission.ia_stream_word_declenche`) qui **POST**
+    vers **`/rapport-mission/ia/word`** (`_rapport_mission_ia_word_post`, route ajoutée à
+    `do_POST`). Cette route **convertit le Markdown déjà produit** en `.docx` (AUCUN 2e appel
+    IA -> rapide, pas de timeout) et le renvoie en pièce jointe (`_octets`, MIME
+    wordprocessingml). Le Markdown posté est **déjà anonymisé** (aucun nom).
+  - **Entrée directe depuis le formulaire** : pour les logins autorisés, le formulaire
+    `page_formulaire(..., mode_ia=True)` a son **action pointée sur `/rapport-mission/ia`** —
+    le bouton « **Générer le rapport Word (IA)** » lance donc directement la génération Word
+    (plus la compilation hors-ligne). Les autres rôles de lecture gardent l'action
+    `/rapport-mission` (compilation hors-ligne, bouton « Générer le rapport »). Le texte du
+    formulaire prévient, en mode IA, que les journaux ANONYMISÉS sont envoyés à l'API.
+  - **`rapport_word.construire_docx(markdown, rapport, perim_label) -> bytes`** (python-docx
+    + matplotlib backend Agg + Pillow, **installés au venv**) : **page de garde** (bannière
+    `images/images.jfif` convertie en PNG via PIL, titre, période/périmètre, **bande aux
+    couleurs du drapeau** malgache), **cartes KPI** colorées, **2 GRAPHIQUES** matplotlib
+    (entrées par district = barres H ; activité par jour = barres V), puis le **corps IA**
+    (titres colorés/soulignés, listes, tableaux, gras/italique) via un mini-parseur
+    Markdown->docx. Charte reprise du rapport HTML (`#12325c`/`#1558c9`). Numéros de page
+    en pied. Module **tolérant** (bannière/graphe manquant -> sauté).
+  - Testé en HTTP réel **sur une COPIE** (port 8011, préfixe `/rsu`, jamais la vraie base) :
+    `COORDOREG_01` -> bouton IA présent, `POST /rapport-mission/ia/word` = **200** + `.docx`
+    valide (en-tête `PK`, MIME + `Content-Disposition` corrects, ~300 Ko) ; `COORDONAT_01`
+    -> **bouton absent**, `GET /rapport-mission/ia` = **303** vers `/coordonat`, `POST` word
+    = **403**. Génération docx unitaire validée (3 tableaux, 3 images, ré-ouverture OK).
+  - ⚠️ **Nouvelles dépendances serveur** : `python-docx`, `matplotlib` (+ `numpy`, `Pillow`,
+    `lxml`…). À installer sur le serveur de prod : `venv/bin/pip install python-docx
+    matplotlib`. La génération IA reste conditionnée à `ia_active()` (`RSU_IA_RAPPORT=1` +
+    `ANTHROPIC_API_KEY`). **Redémarrage du service requis** pour servir les nouvelles routes
+    (`kill` du process -> systemd relance ; cf. « Redémarrer sans sudo »).
+
+- **CONTEXTE DE RÉFÉRENCE injecté dans le prompt IA** (`contexte_rsu.py` nouveau) : la note
+  conceptuelle RSU/e-Fokontany (contexte, cadre RSU, e-Fokontany, articulation, principes,
+  gouvernance + **mandat INSTAT / Loi n°2018-004 / secret statistique**, résultats attendus,
+  **historique des phases 2023->2025**) est stockée dans `contexte_rsu.CONTEXTE_RSU` et
+  ajoutée au système IA (`rapport_mission._SYSTEM_IA`). But : les sections CADRÉES
+  (introduction, concept/justification, objectifs, gouvernance, historique) s'appuient sur des
+  faits réels du programme. **Règle explicite** dans le prompt : le contexte sert au cadrage
+  SEULEMENT ; le **déroulement et tous les chiffres viennent EXCLUSIVEMENT des journaux** (ne
+  pas présenter l'historique/les districts d'autres vagues comme la mission en cours). Pas de
+  nouvelle dépendance ; pris en compte au même redémarrage.
+
 ### Leçons à retenir
 
 - **Git refuse > 100 Mo** : ne jamais versionner base/données ; poser le `.gitignore` AVANT

@@ -53,6 +53,7 @@ import limites_db
 import manuel
 import consignes
 import rapport_mission
+import rapport_word
 
 PORT = 8000
 
@@ -258,6 +259,18 @@ _ROLES_JOURNAL_ECRITURE = ("Comités Techniques", "Traitement", "Expert survey",
                            "Logistique Inter-Communale")
 _ROLES_JOURNAL_LECTURE = ("Coordonnateur Nationale", "Coordonnateur régionale",
                           "Admin")
+
+# RAPPORT DE MISSION — VERSION IA (Word). Réservé à des LOGINS précis (les deux
+# Coordonnateurs régionaux), et NON à un rôle : seuls ces comptes peuvent générer
+# et télécharger le rapport rédigé par IA. La compilation HORS-LIGNE
+# (/rapport-mission) reste, elle, ouverte aux rôles de LECTURE ci-dessus. Pour
+# ouvrir l'accès à un autre compte (ex. un futur COORDOREG_03), l'ajouter ici.
+LOGINS_RAPPORT_IA = {"COORDOREG_01", "COORDOREG_02"}
+
+
+def peut_rapport_ia(u) -> bool:
+    """Vrai si l'utilisateur connecté peut accéder au rapport de mission IA (Word)."""
+    return ((u or {}).get("login") or "").strip() in LOGINS_RAPPORT_IA
 
 # CONSIGNES / INSTRUCTIONS. Émetteurs = les deux Coordonnateurs (le National peut
 # viser tous les districts ; le Régional est borné à SES districts). Rôles
@@ -3261,6 +3274,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._consignes_modifier_post()
         elif chemin == "/consignes/supprimer":
             self._consignes_supprimer_post()
+        elif chemin == "/rapport-mission/ia/word":
+            self._rapport_mission_ia_word_post()
         elif chemin == "/suivi":
             self._traiter_selection()
         elif chemin in ("/admin/utilisateurs", "/admin/import"):
@@ -3451,9 +3466,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if districts is not None:
                     perim = {str(d) for d in districts}
                     tous = [d for d in tous if d["code"] in perim]
+                # Logins autorisés (COORDOREG_01/02) : « Générer le rapport » lance
+                # DIRECTEMENT le rapport Word IA (action -> /rapport-mission/ia). Les
+                # autres rôles de lecture obtiennent la compilation hors-ligne.
+                ia = peut_rapport_ia(u)
                 self._html(rapport_mission.page_formulaire(
                     config.DATE_DEBUT_MISSION, journal.aujourdhui(), tous,
-                    action="/rapport-mission", retour_href=accueil_role(role)))
+                    action="/rapport-mission/ia" if ia else "/rapport-mission",
+                    retour_href=accueil_role(role), mode_ia=ia))
                 return
             if district_f:
                 districts_eff = {district_f}
@@ -3467,17 +3487,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
         params = {"debut": debut, "fin": fin}
         if district_f:
             params["district"] = district_f
-        ia_href = "/rapport-mission/ia?" + urllib.parse.urlencode(params)
+        # Bouton « rapport IA (Word) » RÉSERVÉ aux logins autorisés (COORDOREG_01/02).
+        ia_href = ("/rapport-mission/ia?" + urllib.parse.urlencode(params)
+                   if peut_rapport_ia(u) else "")
         self._html(rapport_mission.rendu_html(
             rapport, perim_label, retour_href="/rapport-mission", ia_href=ia_href))
 
     def _rapport_mission_ia_get(self, sess):
-        """GET /rapport-mission/ia : rapport RÉDIGÉ PAR IA (API Claude), mêmes gardes
-        et périmètre que /rapport-mission. Ne fait rien sortir tant que l'IA n'est pas
-        explicitement activée (ia_active())."""
+        """GET /rapport-mission/ia : rapport RÉDIGÉ PAR IA (API Claude) livré en WORD.
+        Réservé aux LOGINS autorisés (COORDOREG_01/02), pas à un rôle. Affiche une page
+        de progression (streaming + heartbeats pour éviter le 504) puis, la rédaction
+        finie, déclenche automatiquement le téléchargement du .docx (conversion du
+        Markdown déjà produit, sans 2e appel IA). Périmètre borné comme
+        /rapport-mission. Rien ne sort tant que l'IA n'est pas activée (ia_active())."""
         u = (sess or {}).get("utilisateur") or {}
         role = (u.get("responsabilite") or "").strip()
-        if role not in _ROLES_JOURNAL_LECTURE:
+        if not peut_rapport_ia(u):
             self._redirige(accueil_role(role))
             return
         if not rapport_mission.ia_active():
@@ -3531,7 +3556,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 w.flush()
             md = "".join(morceaux).strip()
             if md:
-                _ecrire(rapport_mission.ia_stream_corps(md, rapport, perim_label))
+                # Rédaction finie : on déclenche le téléchargement Word (POST du
+                # Markdown -> route de conversion, qui renvoie le .docx).
+                action = config.PREFIXE + "/rapport-mission/ia/word"
+                _ecrire(rapport_mission.ia_stream_word_declenche(
+                    md, debut, fin, district_f, action))
             else:
                 _ecrire(rapport_mission.ia_stream_erreur("Réponse vide du modèle."))
         except Exception as e:
@@ -3543,6 +3572,57 @@ class Handler(http.server.BaseHTTPRequestHandler):
             _ecrire(rapport_mission.ia_stream_fin())
         except Exception:
             pass
+
+    def _rapport_mission_ia_word_post(self):
+        """POST /rapport-mission/ia/word : convertit le Markdown (déjà rédigé par l'IA,
+        ANONYMISÉ) en document WORD moderne et illustré, renvoyé en pièce jointe. Même
+        garde (LOGINS_RAPPORT_IA) et même bornage de périmètre. AUCUN nouvel appel IA :
+        on reçoit le Markdown produit par la page de progression."""
+        sess = _session(self)
+        if sess is None:
+            self._redirige("/login")
+            return
+        u = (sess or {}).get("utilisateur") or {}
+        if not peut_rapport_ia(u):
+            self._html(page_erreur("Accès réservé.", 403), 403)
+            return
+        champs = self._corps_formulaire()
+
+        def _val(cle):
+            return (champs.get(cle, [""])[0] or "").strip()
+
+        markdown = champs.get("markdown", [""])[0]      # NE PAS strip (mise en forme)
+        debut, fin, district_f = _val("debut"), _val("fin"), _val("district")
+        if not markdown.strip() or not debut or not fin:
+            self._redirige("/rapport-mission")
+            return
+        districts = perimetre(u)[0]
+        if district_f and districts is not None and district_f not in {str(d) for d in districts}:
+            district_f = ""
+        conn = db_source.connect()
+        try:
+            if district_f:
+                districts_eff = {district_f}
+                perim_label = district_f
+            else:
+                districts_eff = districts
+                perim_label = "Tous mes districts" if districts else "Tous les districts"
+            # Recompose les stats/graphiques depuis la base (rapide, local, périmètre
+            # respecté) — le TEXTE, lui, vient du Markdown reçu.
+            rapport = rapport_mission.synthese_locale(conn, debut, fin, districts_eff)
+        finally:
+            conn.close()
+        try:
+            data = rapport_word.construire_docx(markdown, rapport, perim_label)
+        except Exception as e:
+            print(f"[app] erreur génération Word rapport de mission : {e}")
+            self._html(rapport_mission.page_ia_erreur(
+                f"Échec de la génération Word : {e}", "/rapport-mission"), 500)
+            return
+        self._octets(
+            data,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            rapport_word.nom_fichier(rapport))
 
     def _journal_get(self, sess):
         """GET /journal : page d'ÉCRITURE (équipe technique) ou de LECTURE

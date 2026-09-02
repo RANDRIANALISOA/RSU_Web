@@ -22,6 +22,7 @@ import os
 import re
 import unicodedata
 
+import contexte_rsu
 import journal
 import zones
 
@@ -245,7 +246,7 @@ def rendu_html(rapport, perimetre_label, retour_href, ia_html="", ia_href=""):
     esc = htmllib.escape
     r = rapport
     s = r["stats"]
-    bouton_ia = (f'<a class="rm-btn" href="{esc(ia_href)}">🤖 Version rédigée par IA</a>'
+    bouton_ia = (f'<a class="rm-btn" href="{esc(ia_href)}">📄 Rapport rédigé par IA (Word)</a>'
                  if ia_href else "")
 
     kpis = (
@@ -347,12 +348,29 @@ def rendu_html(rapport, perimetre_label, retour_href, ia_html="", ia_href=""):
         '</div></div></body></html>')
 
 
-def page_formulaire(debut_defaut, fin_defaut, districts_dispo, action, retour_href):
-    """Formulaire de choix (période + district facultatif)."""
+def page_formulaire(debut_defaut, fin_defaut, districts_dispo, action, retour_href,
+                    mode_ia=False):
+    """Formulaire de choix (période + district facultatif).
+
+    mode_ia=True : le bouton « Générer le rapport » lance DIRECTEMENT le rapport WORD
+    rédigé par IA (l'action pointe alors vers /rapport-mission/ia). Le texte prévient
+    honnêtement que les journaux ANONYMISÉS sont envoyés à l'API pour la rédaction."""
     esc = htmllib.escape
     opts = ['<option value="">Tous mes districts</option>']
     for d in districts_dispo:
         opts.append(f'<option value="{esc(d["code"])}">{esc(d["nom"])} ({esc(d["code"])})</option>')
+    if mode_ia:
+        intro = ('Génère un <strong>rapport de mission Word rédigé par IA</strong> à '
+                 'partir des journaux de bord de la période choisie. Les journaux, '
+                 '<strong>sans les noms des personnes</strong>, sont envoyés à l\'API pour '
+                 'la rédaction (~1 à 2 min) ; le fichier Word se télécharge automatiquement. '
+                 'À relire avant diffusion.')
+        libelle_bouton = '📄 Générer le rapport Word (IA)'
+    else:
+        intro = ('Compile les journaux de bord de la période choisie en un rapport de '
+                 'mission structuré (en français), imprimable. Hors-ligne : aucune donnée '
+                 'n\'est envoyée à l\'extérieur.')
+        libelle_bouton = 'Générer le rapport'
     return (
         '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -366,14 +384,12 @@ def page_formulaire(debut_defaut, fin_defaut, districts_dispo, action, retour_hr
         '</style></head><body><div class="rm-wrap">'
         '<div class="rm-bar"><h1>Rapport de mission</h1>'
         f'<a class="rm-btn sec" href="{esc(retour_href)}">← Retour</a></div>'
-        '<p style="color:#5a6675">Compile les journaux de bord de la période choisie en '
-        'un rapport de mission structuré (en français), imprimable. Hors-ligne : aucune '
-        'donnée n\'est envoyée à l\'extérieur.</p>'
+        f'<p style="color:#5a6675">{intro}</p>'
         f'<form class="rm-f" method="get" action="{esc(action)}">'
         f'<div><label>Du</label><input type="date" name="debut" value="{esc(debut_defaut)}" required></div>'
         f'<div><label>Au</label><input type="date" name="fin" value="{esc(fin_defaut)}" required></div>'
         f'<div><label>District</label><select name="district">{"".join(opts)}</select></div>'
-        '<div><button class="rm-btn" type="submit">Générer le rapport</button></div>'
+        f'<div><button class="rm-btn" type="submit">{libelle_bouton}</button></div>'
         '</form></div></body></html>')
 
 
@@ -403,7 +419,20 @@ _SYSTEM_IA = (
     "7. Coordination et communication ; 8. Difficultés rencontrées ; 9. Solutions et "
     "mesures d'adaptation ; 10. Résultats obtenus ; 11. Synthèse par district "
     "(tableau) ; 12. Appréciation générale ; 13. Recommandations ; 14. Conclusion.\n"
-    "- Reste synthétique tout en étant complet."
+    "- Reste synthétique tout en étant complet.\n\n"
+    "IMPORTANT — deux natures d'information :\n"
+    "1) Un CONTEXTE GÉNÉRAL du programme RSU/e-Fokontany t'est fourni ci-dessous. Il "
+    "sert UNIQUEMENT à cadrer les sections institutionnelles (introduction, concept et "
+    "justification, objectifs, principes, gouvernance, mandat et secret statistique de "
+    "l'INSTAT, historique du programme, résultats attendus). Tu peux t'en inspirer "
+    "librement pour ces sections.\n"
+    "2) Les JOURNAUX DE BORD (fournis dans le message) sont la SEULE source des faits, "
+    "chiffres et du déroulement RÉEL de la mission rapportée. Ne présente jamais un "
+    "élément du contexte général (ex. l'historique des phases, une liste de districts "
+    "d'autres vagues) comme un fait observé pendant la période rapportée. En cas de "
+    "doute, appuie-toi sur les journaux.\n\n"
+    "=== CONTEXTE GÉNÉRAL DU PROGRAMME (cadrage, non spécifique à la mission) ===\n"
+    + contexte_rsu.CONTEXTE_RSU
 )
 
 
@@ -520,6 +549,27 @@ def ia_stream_corps(markdown, rapport, perimetre_label):
         '<button class="rm-btn" onclick="window.print()">🖨 Imprimer / PDF</button></div>'
         f'<div class="rm-doc">{markdown_html(markdown)}</div>'
         '<script>var g=document.getElementById("rm-gen");if(g)g.remove();</script>')
+
+
+def ia_stream_word_declenche(markdown, debut, fin, district, action_url):
+    """Fin de la page de progression : le Markdown vient d'être produit. On l'injecte
+    dans un formulaire CACHÉ auto-soumis (POST) vers la route de conversion Word, qui
+    renvoie le .docx en pièce jointe (téléchargement direct). La page reste affichée
+    (« téléchargement en cours »). Le Markdown est déjà ANONYMISÉ (aucun nom)."""
+    esc = htmllib.escape
+    return (
+        '<script>var g=document.getElementById("rm-gen");if(g)g.remove();</script>'
+        '<div class="rm-note rm-noprint">📄 <strong>Rapport généré.</strong> '
+        'Le téléchargement du fichier Word démarre automatiquement… '
+        '<span class="rm-edit">À relire et valider avant diffusion.</span></div>'
+        f'<form id="rm-dl" method="post" action="{esc(action_url)}">'
+        f'<input type="hidden" name="debut" value="{esc(debut)}">'
+        f'<input type="hidden" name="fin" value="{esc(fin)}">'
+        f'<input type="hidden" name="district" value="{esc(district)}">'
+        f'<textarea name="markdown" hidden>{esc(markdown)}</textarea>'
+        '<noscript><button class="rm-btn" type="submit">📄 Télécharger le Word</button>'
+        '</noscript></form>'
+        '<script>setTimeout(function(){document.getElementById("rm-dl").submit();},400);</script>')
 
 
 def ia_stream_erreur(message):
