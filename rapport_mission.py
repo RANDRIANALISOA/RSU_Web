@@ -445,7 +445,14 @@ def synthese_ia(rapport, perimetre_label):
     """Rédige le rapport (Markdown) via l'API Claude (modèle Opus 5), à partir des
     journaux SANS noms. Lève une exception explicite si la clé/le réseau échoue."""
     import anthropic  # dépendance serveur (pip install anthropic)
-    client = anthropic.Anthropic()  # clé via ANTHROPIC_API_KEY
+    # Clé via ANTHROPIC_API_KEY. Si la clé est liée à un workspace (clé
+    # « identity-linked »), l'API exige l'en-tête anthropic-workspace-id : on le
+    # transmet depuis ANTHROPIC_WORKSPACE_ID quand il est défini.
+    kwargs = {}
+    wsid = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
+    if wsid:
+        kwargs["default_headers"] = {"anthropic-workspace-id": wsid}
+    client = anthropic.Anthropic(**kwargs)
     contenu = ("Rédige le rapport de mission à partir des journaux de bord "
                "ci-dessous.\n\n" + _journaux_en_texte(rapport, perimetre_label))
     # Streaming (sortie longue) + réflexion adaptive ; on récupère le message final.
