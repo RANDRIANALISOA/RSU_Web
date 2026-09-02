@@ -487,7 +487,7 @@ def page_accueil() -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rapport RSU 2026 — Accueil</title>
 <style>
-  :root{{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px)}}
+  :root{{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px)}}
 
   body{{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:47.5rem;margin:2.25rem auto;
        padding:0 1rem;color:#1c2430;line-height:1.5}}
@@ -531,11 +531,11 @@ def page_login(erreur: bool = False) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Connexion</title>
 <style>
-:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
 
   *{box-sizing:border-box}
   :root{--bleu:#1b6ef3;--bleu-f:#1558c9;--vert:#17a398;--nuit:#0d2b4e;--texte:#1c2430}
-  html,body{height:100%}
+  html,body{min-height:100%}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:var(--texte);margin:0;
     min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
     line-height:1.5;background:#0d2b4e}
@@ -980,7 +980,7 @@ def page_selection(erreur: str = "", utilisateur=None, op=None) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Zone & type de suivi</title>
 <style>
-:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
 
   *{box-sizing:border-box}
   :root{--bleu:#1b6ef3;--bleu-f:#1558c9;--vert:#17a398;--nuit:#0d2b4e;--texte:#1c2430}
@@ -1140,7 +1140,7 @@ def page_suivi(sel: dict) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Suivi {esc(libelle_suivi)}</title>
 <style>
-  :root{{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px)}}
+  :root{{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px)}}
 
   body{{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
     min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
@@ -1207,7 +1207,7 @@ def page_vad_indisponible(sel: dict) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Visite à domicile</title>
 <style>
-  :root{{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px)}}
+  :root{{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px)}}
 
   body{{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
     min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
@@ -1346,7 +1346,7 @@ def page_equipe_technique(sel: dict, equipes, retour_href="/",
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Équipe technique</title>
 <style>
-:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
 
   *{box-sizing:border-box}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
@@ -1508,7 +1508,7 @@ def page_motdepasse(erreur: str = "", succes: bool = False, sess=None) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Mon mot de passe</title>
 <style>
-:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
 
   *{box-sizing:border-box}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
@@ -1630,7 +1630,7 @@ def _journal_zone(conn, u):
 
 
 _STYLE_JOURNAL = """
-:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
   *{box-sizing:border-box}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
     min-height:100vh;background:#eef2f7;line-height:1.5;padding:5.25rem 1.25rem 3rem}

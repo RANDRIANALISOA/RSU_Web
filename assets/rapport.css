@@ -5,7 +5,7 @@
   /* Base fluide : ~16px sur poste standard (>=1200px), réduite sur petits
      écrans, un peu plus grande sur très grands. Toutes les tailles ci-dessous
      sont en rem -> elles suivent cette base et s'adaptent à chaque écran. */
-  font-size: clamp(12px, 0.22vw + 10.2px, 14px);
+  font-size: clamp(11px, 0.18vw + 9.5px, 13px);
   --bg:        #f0f2f7;
   --surface:   #ffffff;
   --surface2:  #f8f9fc;
@@ -23,9 +23,14 @@
   --shadow:    0 1px 3px rgba(0,0,0,0.07), 0 4px 16px rgba(0,0,0,0.05);
 }
 *{box-sizing:border-box;margin:0;padding:0;}
-html,body{height:100%;overflow:hidden;}
-body { font-family:'Bricolage Grotesque',sans-serif; font-size:0.875rem; background:var(--bg); color:var(--text); display:flex; }
-.sidebar { width:15.625rem; min-width:15.625rem; background:var(--sidebar); height:100vh; display:flex; flex-direction:column; padding:1.25rem 0.75rem; overflow-y:auto; flex-shrink:0; }
+/* Défilement NATUREL de la page (plus de gabarit « plein écran » height:100vh +
+   overflow:hidden, qui piégeait le contenu sur les écrans courts / mis à l'échelle
+   -> une partie restait invisible). overflow-x:hidden évite un débordement latéral. */
+html{overflow-x:hidden;}
+body { font-family:'Bricolage Grotesque',sans-serif; font-size:0.875rem; background:var(--bg); color:var(--text); display:flex; min-height:100vh; overflow-x:hidden; }
+/* Barre latérale « collante » : reste visible pendant que la page défile, sans
+   emprisonner le contenu dans une zone à défilement interne. */
+.sidebar { width:15.625rem; min-width:15.625rem; background:var(--sidebar); height:100vh; position:sticky; top:0; align-self:flex-start; display:flex; flex-direction:column; padding:1.25rem 0.75rem; overflow-y:auto; flex-shrink:0; }
 .sidebar-brand { display:flex; align-items:center; gap:0.625rem; padding:0.5rem 0.625rem 1.25rem; border-bottom:1px solid rgba(255,255,255,0.07); margin-bottom:1rem; }
 .brand-icon { width:2.25rem;height:2.25rem; background:linear-gradient(135deg,var(--accent),var(--accent2)); border-radius:0.625rem; display:flex;align-items:center;justify-content:center; font-size:1rem;flex-shrink:0; }
 .brand-name { font-weight:700; font-size:0.8125rem; color:#f1f5f9; line-height:1.3; }
@@ -56,7 +61,7 @@ body { font-family:'Bricolage Grotesque',sans-serif; font-size:0.875rem; backgro
 .contact-chip strong{color:#94a3b8;font-weight:600;}
 .contact-chip a{color:inherit;text-decoration:none;}
 .contact-chip a:hover{text-decoration:underline;}
-.main { flex:1; display:flex; flex-direction:column; height:100vh; overflow-y:auto; }
+.main { flex:1; min-width:0; display:flex; flex-direction:column; }
 .topbar { background:var(--surface); border-bottom:1px solid var(--border); padding:1rem 1.75rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; position:sticky; top:0; z-index:50; flex-shrink:0; }
 .topbar-title { font-size:1rem; font-weight:700; color:var(--text); }
 .topbar-sub   { font-size:0.6875rem; color:var(--muted); margin-top:1px; }
@@ -137,11 +142,9 @@ tbody td { padding:0.5625rem 0.875rem; vertical-align:middle; }
    passe en HAUT, compacte (hauteur limitée, défilante), le contenu vient dessous,
    et toute la page défile normalement -> tout est visible. */
 @media(max-width:860px){
-  html,body{height:auto;overflow:auto;}
   body{flex-direction:column;}
-  .sidebar{width:100%;min-width:0;height:auto;max-height:42vh;flex-direction:column;padding:0.75rem;}
+  .sidebar{width:100%;min-width:0;height:auto;max-height:42vh;position:static;flex-direction:column;padding:0.75rem;}
   .nav-sub{max-height:none;}
-  .main{height:auto;overflow:visible;}
   .topbar{position:static;}
   .page{padding:1rem;}
   .kpi-grid{grid-template-columns:repeat(2,1fr);}

@@ -161,7 +161,7 @@ def illus_dashboard():
 
 # --- Styles ----------------------------------------------------------------
 CSS = """
-:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
 *{box-sizing:border-box}
 body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
   background:#eef2f7;line-height:1.6;padding:4.875rem 1.125rem 3.75rem}

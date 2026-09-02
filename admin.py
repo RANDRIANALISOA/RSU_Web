@@ -195,7 +195,7 @@ def export_utilisateurs_csv(conn) -> bytes:
 # Rendu HTML
 # ---------------------------------------------------------------------------
 _STYLE = """
-:root{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px);}
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
 *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;
   background:#f0f2f7;color:#1e293b}
 .bar{background:#0f172a;color:#fff;padding:0.75rem 1.375rem;display:flex;align-items:center;
