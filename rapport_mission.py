@@ -441,21 +441,26 @@ def _journaux_en_texte(rapport, perimetre_label):
     return "\n".join(lignes)
 
 
-def synthese_ia(rapport, perimetre_label):
-    """Rédige le rapport (Markdown) via l'API Claude (modèle Opus 5), à partir des
-    journaux SANS noms. Lève une exception explicite si la clé/le réseau échoue."""
+def _client_ia():
+    """Client Anthropic (clé via ANTHROPIC_API_KEY). Si la clé est liée à un
+    workspace, l'API exige l'en-tête anthropic-workspace-id : transmis depuis
+    ANTHROPIC_WORKSPACE_ID quand défini."""
     import anthropic  # dépendance serveur (pip install anthropic)
-    # Clé via ANTHROPIC_API_KEY. Si la clé est liée à un workspace (clé
-    # « identity-linked »), l'API exige l'en-tête anthropic-workspace-id : on le
-    # transmet depuis ANTHROPIC_WORKSPACE_ID quand il est défini.
     kwargs = {}
     wsid = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
     if wsid:
         kwargs["default_headers"] = {"anthropic-workspace-id": wsid}
-    client = anthropic.Anthropic(**kwargs)
+    return anthropic.Anthropic(**kwargs)
+
+
+def synthese_ia_iter(rapport, perimetre_label):
+    """Génère le rapport (Markdown) via l'API Claude (Opus 5) EN FLUX : produit les
+    morceaux de texte au fur et à mesure. Permet de garder la connexion active
+    (heartbeats) pendant la génération -> pas de 504 côté proxy. Lève une exception
+    (clé, crédit, réseau…) dès la 1re lecture du flux."""
+    client = _client_ia()
     contenu = ("Rédige le rapport de mission à partir des journaux de bord "
                "ci-dessous.\n\n" + _journaux_en_texte(rapport, perimetre_label))
-    # Streaming (sortie longue) + réflexion adaptive ; on récupère le message final.
     with client.messages.stream(
         model="claude-opus-5",
         max_tokens=20000,
@@ -463,11 +468,69 @@ def synthese_ia(rapport, perimetre_label):
         system=_SYSTEM_IA,
         messages=[{"role": "user", "content": contenu}],
     ) as stream:
+        # On itère TOUS les événements (réflexion comprise) et on émet "" comme
+        # heartbeat : ainsi des octets circulent AUSSI pendant la phase de réflexion
+        # (sinon le proxy couperait avant le 1er texte). Seuls les deltas de texte
+        # portent du contenu.
+        for event in stream:
+            if getattr(event, "type", "") == "content_block_delta" and \
+               getattr(event.delta, "type", "") == "text_delta":
+                yield event.delta.text
+            else:
+                yield ""
         msg = stream.get_final_message()
-    if getattr(msg, "stop_reason", None) == "refusal":
-        raise RuntimeError("La génération a été déclinée par le modèle.")
-    return "".join(b.text for b in msg.content
-                   if getattr(b, "type", "") == "text").strip()
+        if getattr(msg, "stop_reason", None) == "refusal":
+            raise RuntimeError("La génération a été déclinée par le modèle.")
+
+
+def synthese_ia(rapport, perimetre_label):
+    """Version bloquante : renvoie tout le Markdown (utilise le flux en interne)."""
+    return "".join(synthese_ia_iter(rapport, perimetre_label)).strip()
+
+
+# --- Rendu EN FLUX de la page IA (évite le 504 : octets envoyés régulièrement) ---
+def ia_stream_entete(rapport, perimetre_label, retour_href):
+    """Début de la page IA (envoyé immédiatement) : en-tête + placeholder animé."""
+    esc = htmllib.escape
+    return (
+        '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>RSU 2026 — Rapport de mission (IA)</title>'
+        f'<style>{_STYLE}'
+        "@keyframes rmspin{to{transform:rotate(360deg)}}"
+        ".rm-spin{display:inline-block;width:1.1rem;height:1.1rem;border:2px solid #c7dbf7;"
+        "border-top-color:#1558c9;border-radius:50%;animation:rmspin .8s linear infinite;"
+        "vertical-align:middle;margin-right:.5rem}"
+        '</style></head><body><div class="rm-wrap">'
+        '<div class="rm-bar rm-noprint"><h1>Rapport de mission — version IA</h1>'
+        f'<a class="rm-btn sec" href="{esc(retour_href)}">← Retour</a></div>'
+        f'<div id="rm-gen" class="rm-note rm-noprint"><span class="rm-spin"></span>'
+        '<strong>Génération en cours…</strong> (rédaction par IA, ~1 à 2 min — '
+        'ne fermez pas la page).</div>')
+
+
+def ia_stream_corps(markdown, rapport, perimetre_label):
+    """Rapport final : injecté après le placeholder, qu'on retire ensuite."""
+    esc = htmllib.escape
+    return (
+        '<div class="rm-note rm-noprint">🤖 <strong>Rédigé par IA</strong> à partir des '
+        'journaux de bord (sans les noms). '
+        f'Période {esc(rapport["debut"])} → {esc(rapport["fin"])} · {esc(perimetre_label)}. '
+        '<span class="rm-edit">À relire avant diffusion.</span> '
+        '<button class="rm-btn" onclick="window.print()">🖨 Imprimer / PDF</button></div>'
+        f'<div class="rm-doc">{markdown_html(markdown)}</div>'
+        '<script>var g=document.getElementById("rm-gen");if(g)g.remove();</script>')
+
+
+def ia_stream_erreur(message):
+    esc = htmllib.escape
+    return ('<div class="rm-note"><strong>La génération a échoué.</strong><br>'
+            f'Détail : {esc(message)}</div>'
+            '<script>var g=document.getElementById("rm-gen");if(g)g.remove();</script>')
+
+
+def ia_stream_fin():
+    return "</div></body></html>"
 
 
 # --- Markdown -> HTML (petit convertisseur, sans dépendance) --------------------

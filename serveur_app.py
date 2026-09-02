@@ -3506,12 +3506,43 @@ class Handler(http.server.BaseHTTPRequestHandler):
             rapport = rapport_mission.synthese_locale(conn, debut, fin, districts_eff)
         finally:
             conn.close()
+        # Réponse EN FLUX : on envoie l'en-tête tout de suite, puis des « heartbeats »
+        # pendant que l'IA rédige (octets réguliers) -> le proxy ne coupe pas (pas de
+        # 504), même si la génération dure 1-2 min. Écriture directe (pas via _html) ;
+        # le lien de retour est donc préfixé à la main.
+        retour = config.PREFIXE + "/rapport-mission"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")  # nginx : ne pas tamponner
+        self.end_headers()
+        w = self.wfile
+
+        def _ecrire(txt):
+            w.write(txt.encode("utf-8"))
+            w.flush()
+
         try:
-            markdown = rapport_mission.synthese_ia(rapport, perim_label)
+            _ecrire(rapport_mission.ia_stream_entete(rapport, perim_label, retour))
+            morceaux = []
+            for bout in rapport_mission.synthese_ia_iter(rapport, perim_label):
+                morceaux.append(bout)
+                w.write(b"<!-- . -->")   # heartbeat : garde la connexion active
+                w.flush()
+            md = "".join(morceaux).strip()
+            if md:
+                _ecrire(rapport_mission.ia_stream_corps(md, rapport, perim_label))
+            else:
+                _ecrire(rapport_mission.ia_stream_erreur("Réponse vide du modèle."))
         except Exception as e:
-            self._html(rapport_mission.page_ia_erreur(str(e), "/rapport-mission"))
-            return
-        self._html(rapport_mission.rendu_ia(rapport, perim_label, "/rapport-mission", markdown))
+            try:
+                _ecrire(rapport_mission.ia_stream_erreur(str(e)))
+            except Exception:
+                pass
+        try:
+            _ecrire(rapport_mission.ia_stream_fin())
+        except Exception:
+            pass
 
     def _journal_get(self, sess):
         """GET /journal : page d'ÉCRITURE (équipe technique) ou de LECTURE
