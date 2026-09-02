@@ -8,6 +8,11 @@ Group=rse
 WorkingDirectory=/home/rse/rsu-web
 Environment="RSU_PREFIXE=/rsu-web"
 # La base rsu_local.sqlite est lue dans WorkingDirectory par défaut.
+# Génération du rapport de mission par IA : DÉSACTIVÉE par défaut (0). Pour
+# l'activer, NE PAS écrire la clé ici (fichier versionné) : la mettre dans le
+# fichier de secrets ci-dessous (NON versionné), qui surcharge cette valeur.
+Environment="RSU_IA_RAPPORT=0"
+EnvironmentFile=-/home/rse/rsu-web/deploy/rsu-web.env
 ExecStart=/home/rse/rsu-web/venv/bin/python /home/rse/rsu-web/serveur_app.py
 Restart=always
 RestartSec=3

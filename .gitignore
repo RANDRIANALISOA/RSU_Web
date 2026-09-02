@@ -16,6 +16,7 @@ uploads/
 instance/
 *.log
 .env
+deploy/rsu-web.env
 
 # Sauvegardes automatiques (ne pas versionner)
 *_backup_*/
