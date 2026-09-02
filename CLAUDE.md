@@ -1574,3 +1574,48 @@ de vrais postes / en rétrécissant la fenêtre.
 - **Convertisseur px→rem** : gérer les décimaux **sans zéro initial** (`.5px`) avec
   `(\d*\.?\d+)px` (sinon `.5px` → `.0.3125rem`, CSS cassé) ; **protéger** les préludes de
   media queries (`@media ... {`) pour garder les points de rupture en px.
+
+---
+
+## Consolidation des branches + activation IA (récap 2026-09-02)
+
+Trois chantiers ont été menés sur des branches séparées puis **réunis sur `main`**
+(commit de fusion `910b03a`). `main` = version complète ; `responsive-ui` reste comme
+historique (déjà fusionnée). **Rien n'est encore poussé sur GitHub** (faire `git push`
+après validation ; ⚠️ `deploy/rsu-web.env` est gitignoré — ne jamais le pousser).
+
+**Ce que `main` contient désormais, réuni :**
+1. **Affichage adaptatif** (voir « Affichage adaptatif / responsive ») : base fluide
+   `clamp(11px,0.18vw+9.5px,13px)`, défilement naturel + barre latérale sticky, mobile
+   ≤860px, pages toutes fluides (`--rsu-fluid`).
+2. **Menus repliables** (voir « Menus repliables ») : bouton **☰ du bandeau**
+   (`.rsu-b-toggle` → `.rsu-col`) et bouton **☰ du dashboard** (`.rsu-nav-toggle` →
+   `body.rsu-nav-col`), état mémorisé en `localStorage`.
+3. **Rapport de mission** (`rapport_mission.py`, `rapport_word.py`, `contexte_rsu.py` ;
+   voir les sections datées) : compilation **hors-ligne** (`/rapport-mission`, tous les
+   rôles de lecture, gratuite) **+** rapport **rédigé par IA → Word** (`/rapport-mission/ia`,
+   **réservé aux logins `LOGINS_RAPPORT_IA`**).
+
+**Dépendances serveur (venv) ajoutées** — installer sur toute nouvelle machine :
+`venv/bin/pip install anthropic python-docx matplotlib` (tire aussi Pillow, numpy, lxml…).
+`anthropic` sert l'appel IA ; `python-docx`+`matplotlib`+`Pillow` l'export Word.
+
+**Activer l'IA (sinon bouton → page « inactive », aucune donnée ne sort)** :
+1. `cp deploy/rsu-web.env.exemple deploy/rsu-web.env` puis remplir
+   `ANTHROPIC_API_KEY=sk-ant-…` et garder `RSU_IA_RAPPORT=1`. Si la clé est **liée à un
+   workspace**, ajouter `ANTHROPIC_WORKSPACE_ID=wrkspc_…` (sinon erreur
+   *anthropic-workspace-id is required*) — géré par `rapport_mission._client_ia`.
+2. `deploy/rsu-web.service` charge ce fichier via `EnvironmentFile=-…/deploy/rsu-web.env`.
+   Comme l'unité a changé, la réinstaller **une fois** (sudo) :
+   `sudo cp deploy/rsu-web.service /etc/systemd/system/ && sudo systemctl daemon-reload
+   && sudo systemctl restart rsu-web`. Ensuite, recharges de code = `kill` sans sudo.
+3. Modèle **`claude-opus-5`** (~0,3–0,6 $/rapport ; Sonnet possible pour ~2,5× moins cher).
+
+**Piège 504 (résolu)** : la génération IA (~1-2 min) dépassait le timeout du proxy
+(nginx/Apache devant l'app). Corrigé **côté application** (pas de config proxy) : réponse
+**en flux** avec un **heartbeat `<!-- . -->` sur CHAQUE événement du stream** (réflexion
+comprise, pas seulement le texte — sinon coupure pendant la phase de réflexion) +
+en-tête `X-Accel-Buffering: no`. Cf. `synthese_ia_iter` / `_rapport_mission_ia_get`.
+
+**Cache CSS** : `/assets` est mis en cache 24 h (`max-age=86400`) → après un déploiement
+qui touche `rapport.css`, tester avec **Ctrl+F5** (sinon l'ancien CSS est resservi).
