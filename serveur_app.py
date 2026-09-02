@@ -487,22 +487,24 @@ def page_accueil() -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rapport RSU 2026 — Accueil</title>
 <style>
-  body{{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:760px;margin:36px auto;
-       padding:0 16px;color:#1c2430;line-height:1.5}}
-  h1{{font-size:1.5rem;margin-bottom:4px}}
+  :root{{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px)}}
+
+  body{{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:47.5rem;margin:2.25rem auto;
+       padding:0 1rem;color:#1c2430;line-height:1.5}}
+  h1{{font-size:1.5rem;margin-bottom:0.25rem}}
   .sous{{color:#5a6675;margin-top:0}}
-  details{{border:1px solid #dce3ea;border-radius:8px;margin:8px 0;padding:6px 12px}}
+  details{{border:1px solid #dce3ea;border-radius:0.5rem;margin:0.5rem 0;padding:0.375rem 0.75rem}}
   summary{{cursor:pointer;font-weight:600}}
   .n{{color:#8a97a6;font-weight:400}}
-  ul{{list-style:none;padding-left:8px;margin:8px 0}}
-  li{{padding:4px 0}}
+  ul{{list-style:none;padding-left:0.5rem;margin:0.5rem 0}}
+  li{{padding:0.25rem 0}}
   a{{color:#1b6ef3;text-decoration:none}} a:hover{{text-decoration:underline}}
-  .code{{color:#9aa6b3;font-size:.8rem;margin-left:6px}}
-  .note{{background:#eef6ff;border:1px solid #cfe2ff;border-radius:8px;padding:12px;
-         font-size:.88rem;margin:18px 0}}
-  .barre{{display:flex;justify-content:flex-end;margin-bottom:4px}}
-  .barre a{{font-size:.85rem;color:#5a6675;border:1px solid #dce3ea;border-radius:8px;
-    padding:5px 12px}}
+  .code{{color:#9aa6b3;font-size:.8rem;margin-left:0.375rem}}
+  .note{{background:#eef6ff;border:1px solid #cfe2ff;border-radius:0.5rem;padding:0.75rem;
+         font-size:.88rem;margin:1.125rem 0}}
+  .barre{{display:flex;justify-content:flex-end;margin-bottom:0.25rem}}
+  .barre a{{font-size:.85rem;color:#5a6675;border:1px solid #dce3ea;border-radius:0.5rem;
+    padding:0.3125rem 0.75rem}}
   .barre a:hover{{background:#f4f7fb;text-decoration:none}}
 </style></head><body>
 <h1>Rapport RSU 2026</h1>
@@ -1138,34 +1140,36 @@ def page_suivi(sel: dict) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Suivi {esc(libelle_suivi)}</title>
 <style>
+  :root{{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px)}}
+
   body{{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:22px;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
     line-height:1.55;background:#0d2b4e}}
   .fond{{position:fixed;inset:0;z-index:0;background:url(/img/accueil) center/cover no-repeat}}
   .voile{{position:fixed;inset:0;z-index:0;background:linear-gradient(135deg,
     rgba(13,43,78,.62),rgba(21,88,201,.44) 55%,rgba(23,163,152,.46))}}
-  .carte{{position:relative;z-index:2;width:100%;max-width:560px;background:rgba(255,255,255,.92);
-    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-radius:20px;
-    box-shadow:0 30px 70px rgba(0,0,0,.42);padding:30px 32px;animation:app .6s ease both}}
-  .tete{{display:flex;align-items:center;gap:12px;margin-bottom:14px}}
-  .badge{{width:46px;height:46px;border-radius:12px;color:#fff;font-weight:800;flex:none;
+  .carte{{position:relative;z-index:2;width:100%;max-width:35rem;background:rgba(255,255,255,.92);
+    backdrop-filter:blur(0.875rem);-webkit-backdrop-filter:blur(0.875rem);border-radius:1.25rem;
+    box-shadow:0 1.875rem 4.375rem rgba(0,0,0,.42);padding:1.875rem 2rem;animation:app .6s ease both}}
+  .tete{{display:flex;align-items:center;gap:0.75rem;margin-bottom:0.875rem}}
+  .badge{{width:2.875rem;height:2.875rem;border-radius:0.75rem;color:#fff;font-weight:800;flex:none;
     display:flex;align-items:center;justify-content:center;
     background:linear-gradient(135deg,#1b6ef3,#1558c9)}}
   h1{{font-size:1.28rem;margin:0}}
   .ruban{{display:inline-block;margin-top:2px;font-size:.78rem;font-weight:700;color:#0f9d84;
-    background:#e6f7f2;border:1px solid #b8e6da;border-radius:999px;padding:2px 10px}}
-  dl{{margin:18px 0 0;display:grid;grid-template-columns:auto 1fr;gap:10px 16px}}
+    background:#e6f7f2;border:1px solid #b8e6da;border-radius:62.4375rem;padding:2px 0.625rem}}
+  dl{{margin:1.125rem 0 0;display:grid;grid-template-columns:auto 1fr;gap:0.625rem 1rem}}
   dt{{color:#5a6675;font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.4px}}
   dd{{margin:0;font-weight:600}}
-  .note{{margin-top:20px;background:#eef6ff;border:1px solid #cfe2ff;border-radius:11px;
-    padding:12px 14px;font-size:.86rem;color:#3a5a80}}
-  .actions{{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}}
-  .btn{{flex:1;min-width:150px;text-align:center;padding:12px;border-radius:11px;font-weight:700;
+  .note{{margin-top:1.25rem;background:#eef6ff;border:1px solid #cfe2ff;border-radius:0.6875rem;
+    padding:0.75rem 0.875rem;font-size:.86rem;color:#3a5a80}}
+  .actions{{display:flex;gap:0.625rem;margin-top:1.375rem;flex-wrap:wrap}}
+  .btn{{flex:1;min-width:9.375rem;text-align:center;padding:0.75rem;border-radius:0.6875rem;font-weight:700;
     text-decoration:none;cursor:pointer;border:1.5px solid #dce3ea;color:#1c2430;background:#fff}}
   .btn:hover{{background:#f4f7fb}}
   .btn.p{{color:#fff;border:none;background:linear-gradient(135deg,#1b6ef3,#1558c9);
-    box-shadow:0 10px 22px rgba(27,110,243,.28)}}
-  @keyframes app{{from{{opacity:0;transform:translateY(16px)}}to{{opacity:1;transform:none}}}}
+    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.28)}}
+  @keyframes app{{from{{opacity:0;transform:translateY(1rem)}}to{{opacity:1;transform:none}}}}
 </style></head><body>
   <div class="fond"></div><div class="voile"></div>
   <div class="carte">
@@ -1203,32 +1207,34 @@ def page_vad_indisponible(sel: dict) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Visite à domicile</title>
 <style>
+  :root{{--rsu-fluid:1;font-size:clamp(12px, 0.22vw + 10.2px, 14px)}}
+
   body{{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:22px;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
     line-height:1.55;background:#0d2b4e}}
   .fond{{position:fixed;inset:0;z-index:0;background:url(/img/accueil) center/cover no-repeat}}
   .voile{{position:fixed;inset:0;z-index:0;background:linear-gradient(135deg,
     rgba(13,43,78,.66),rgba(21,88,201,.46) 55%,rgba(23,163,152,.48))}}
-  .carte{{position:relative;z-index:2;width:100%;max-width:520px;text-align:center;
-    background:rgba(255,255,255,.93);backdrop-filter:blur(14px);
-    -webkit-backdrop-filter:blur(14px);border-radius:20px;
-    box-shadow:0 30px 70px rgba(0,0,0,.42);padding:38px 34px;animation:app .6s ease both}}
-  .ic{{width:76px;height:76px;margin:0 auto 16px;border-radius:20px;display:flex;
+  .carte{{position:relative;z-index:2;width:100%;max-width:32.5rem;text-align:center;
+    background:rgba(255,255,255,.93);backdrop-filter:blur(0.875rem);
+    -webkit-backdrop-filter:blur(0.875rem);border-radius:1.25rem;
+    box-shadow:0 1.875rem 4.375rem rgba(0,0,0,.42);padding:2.375rem 2.125rem;animation:app .6s ease both}}
+  .ic{{width:4.75rem;height:4.75rem;margin:0 auto 1rem;border-radius:1.25rem;display:flex;
     align-items:center;justify-content:center;color:#b7791f;
     background:linear-gradient(135deg,#fff4d6,#ffe6a8)}}
-  h1{{font-size:1.35rem;margin:0 0 6px}}
+  h1{{font-size:1.35rem;margin:0 0 0.375rem}}
   .ruban{{display:inline-block;font-size:.76rem;font-weight:700;color:#8a5a00;
-    background:#fff4d6;border:1px solid #f0d38a;border-radius:999px;padding:2px 11px;
-    margin-bottom:12px}}
-  p{{color:#41505f;margin:8px 0}}
+    background:#fff4d6;border:1px solid #f0d38a;border-radius:62.4375rem;padding:2px 0.6875rem;
+    margin-bottom:0.75rem}}
+  p{{color:#41505f;margin:0.5rem 0}}
   .district{{font-weight:700;color:#1c2430}}
-  .actions{{display:flex;gap:10px;margin-top:24px;justify-content:center;flex-wrap:wrap}}
-  .btn{{padding:12px 18px;border-radius:11px;font-weight:700;text-decoration:none;
+  .actions{{display:flex;gap:0.625rem;margin-top:1.5rem;justify-content:center;flex-wrap:wrap}}
+  .btn{{padding:0.75rem 1.125rem;border-radius:0.6875rem;font-weight:700;text-decoration:none;
     border:1.5px solid #dce3ea;color:#1c2430;background:#fff}}
   .btn:hover{{background:#f4f7fb}}
   .btn.p{{color:#fff;border:none;background:linear-gradient(135deg,#1b6ef3,#1558c9);
-    box-shadow:0 10px 22px rgba(27,110,243,.28)}}
-  @keyframes app{{from{{opacity:0;transform:translateY(16px)}}to{{opacity:1;transform:none}}}}
+    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.28)}}
+  @keyframes app{{from{{opacity:0;transform:translateY(1rem)}}to{{opacity:1;transform:none}}}}
 </style></head><body>
   <div class="fond"></div><div class="voile"></div>
   <div class="carte">

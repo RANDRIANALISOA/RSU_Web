@@ -1456,11 +1456,12 @@ cohabitent via un **marqueur CSS** (pas de double mise à l'échelle).
 ### Phase 2 — refonte fluide (px → rem + base fluide)
 - Chaque feuille convertie porte sur `:root` : **`--rsu-fluid:1`** (le script Phase 1 lit
   cette variable et **NE zoome PAS** cette page → pas de double échelle) et
-  **`font-size:clamp(12.5px, 0.3vw + 11.7px, 17px)`** (base ≈ 16px sur poste standard,
-  réduite sur petits écrans, un peu plus grande sur très grands). Toutes les tailles sont
-  en **rem** → suivent cette base. Bordures fines (1-2px), ombres, letter-spacing et
+  **`font-size:clamp(12px, 0.22vw + 10.2px, 14px)`** (plafonnée à **14px** = la taille
+  d'origine, jamais plus grande ; réduite jusqu'à ~12px sur petits écrans — RÉGLAGE de la
+  base = ces 3 nombres, à changer PARTOUT à l'identique, cf. plus bas). Toutes les tailles
+  sont en **rem** → suivent cette base. Bordures fines (1-2px), ombres, letter-spacing et
   **conditions de media queries** restent en **px** ; points de rupture ajoutés
-  (rapport.css : 1024/768px).
+  (rapport.css : 1024/860/480px).
 - **Converti (fluide)** : `assets/rapport.css` (dashboard), `admin._STYLE` (admin + menus
   Coordonnateur/Superviseur + Traitement/Transcription/Logistique qui l'incluent),
   `equipes._CSS_CHOIX`, `transcription._CSS_CHOIX`, `logistique._CSS`,
@@ -1469,9 +1470,20 @@ cohabitent via un **marqueur CSS** (pas de double mise à l'échelle).
   `page_motdepasse`. Les fragments (`_CSS_CHOIX`, `_CSS`, `_STYLE_SUIVI`,
   `_STYLE_CONSIGNE_EXTRA`) sont **convertis sans `:root`** : ils héritent du `:root` de
   `admin._STYLE`/`_STYLE_JOURNAL` avec lesquels ils sont toujours servis.
-- **Encore sur le zoom Phase 1** (pages triviales, styles inline **f-string** aux
-  accolades CSS échappées `{{ }}` → conversion volontairement remise) : `page_accueil`,
-  `page_suivi` (récap), `page_vad_indisponible`.
+- **Pages f-string** (accolades CSS échappées `{{ }}`) : `page_accueil`, `page_suivi`
+  (récap), `page_vad_indisponible` — converties AUSSI (le `:root` injecté y est écrit à
+  accolades DOUBLÉES `:root{{...}}` ; `ast.parse` détecte toute erreur d'accolade).
+  → **toutes les pages de l'app sont fluides** ; le zoom Phase 1 ne sert plus que de
+  filet (il no-op sur toute page portant `--rsu-fluid`).
+
+### Révision 2026-09-02 (retour utilisateur)
+Base fluide d'abord réglée trop haut (≤17px) → **police trop grande** ; abaissée à
+`clamp(12px, 0.22vw + 10.2px, 14px)`. Dashboard **cassé sur smartphone** (barre latérale
+fixe → contenu coupé) → sous **860px**, abandon du gabarit plein écran (`height:100vh` +
+`overflow:hidden`) au profit d'un **défilement naturel** : barre latérale compacte en haut
+(`max-height:42vh`, défilante), contenu dessous, KPI 1 colonne <480px. ⚠️ `rapport.css`
+étant mis en cache 24h (`/assets` `max-age=86400`), tester avec **Ctrl+F5** après un
+redéploiement.
 
 ### ⚠️ Resync .exe
 `assets/rapport.css` est partagé avec `..\RSU_Rapport\` (cf. §1) → **recopier** la version
