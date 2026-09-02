@@ -1485,6 +1485,17 @@ fixe → contenu coupé) → sous **860px**, abandon du gabarit plein écran (`h
 étant mis en cache 24h (`/assets` `max-age=86400`), tester avec **Ctrl+F5** après un
 redéploiement.
 
+### Menus repliables (2026-09-02)
+- **Bandeau** (haut-droite) : bouton **☰** (`.rsu-b-toggle`, 1er enfant de `#rsu-bandeau`)
+  qui bascule la classe `.rsu-col` (CSS : cache `.rsu-b-txt` + tous les `a`, ne laisse que
+  bouton + initiales). Script inline dans `bandeau_utilisateur`, état mémorisé
+  (`localStorage rsu_bandeau_col`), **replié par défaut ≤700px**.
+- **Barre latérale des sections** (dashboard) : bouton **☰** (`.rsu-nav-toggle`) injecté
+  dans `.topbar` par le script global (`_STYLE_RESPONSIVE`, fonction `nav()`), **web
+  uniquement** (n'agit que si `.sidebar`+`.topbar` existent → l'exe, sans ce script, garde
+  sa barre). Bascule `body.rsu-nav-col` → `.sidebar{display:none}` (CSS dans rapport.css).
+  État mémorisé (`localStorage rsu_nav_col`), **replié par défaut ≤860px**.
+
 ### ⚠️ Resync .exe
 `assets/rapport.css` est partagé avec `..\RSU_Rapport\` (cf. §1) → **recopier** la version
 fluide. Le `--rsu-fluid` et la base `clamp` y sont bénins (l'exe n'injecte pas le script

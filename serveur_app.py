@@ -2525,7 +2525,29 @@ _STYLE_RESPONSIVE = (
     "var z=(w>=B)?1:Math.max(MIN,w/B);"
     "try{el.style.zoom=z;}catch(e){}}"
     # 'load' : re-vérifie une fois le CSS externe (rapport.css) appliqué.
-    "f();window.addEventListener('resize',f);window.addEventListener('load',f);})();"
+    "f();window.addEventListener('resize',f);window.addEventListener('load',f);"
+    # Bouton REPLIER/DÉPLIER la barre latérale des sections (dashboard uniquement :
+    # n'agit que si .sidebar + .topbar existent). Ajoute un ☰ dans la barre du haut ;
+    # bascule body.rsu-nav-col (CSS dans rapport.css). État mémorisé ; replié par
+    # défaut sur petit écran.
+    "function nav(){var sb=document.querySelector('.sidebar'),"
+    "tb=document.querySelector('.topbar');"
+    "if(!sb||!tb||document.getElementById('rsu-nav-toggle'))return;"
+    "var btn=document.createElement('button');btn.id='rsu-nav-toggle';"
+    "btn.type='button';btn.className='rsu-nav-toggle';btn.innerHTML='\\u2630';"
+    "btn.setAttribute('aria-label','Afficher ou masquer le menu des sections');"
+    "tb.insertBefore(btn,tb.firstChild);var K='rsu_nav_col';"
+    "function setc(c){document.body.classList.toggle('rsu-nav-col',c);"
+    "btn.setAttribute('aria-expanded',String(!c));"
+    "try{localStorage.setItem(K,c?'1':'0');}catch(e){}}"
+    "var v=null;try{v=localStorage.getItem(K);}catch(e){}"
+    "var init=(v===null)?(window.matchMedia&&window.matchMedia('(max-width:860px)').matches)"
+    ":(v==='1');setc(!!init);"
+    "btn.addEventListener('click',function(){"
+    "setc(!document.body.classList.contains('rsu-nav-col'));});}"
+    "if(document.readyState!=='loading')nav();"
+    "else document.addEventListener('DOMContentLoaded',nav);"
+    "})();"
     "</script>"
 )
 
@@ -2620,6 +2642,13 @@ def bandeau_utilisateur(sess) -> str:
         '</svg><span>Consignes</span></a>')
     return (
         '<div id="rsu-bandeau" role="banner">'
+        '<button type="button" class="rsu-b-toggle" aria-expanded="true" '
+        'aria-label="Afficher ou masquer le menu">'
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round" aria-hidden="true">'
+        '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/>'
+        '<line x1="3" y1="18" x2="21" y2="18"/></svg></button>'
         f'<div class="rsu-b-ava">{esc(initiales)}</div>'
         '<div class="rsu-b-txt">'
         f'<span class="rsu-b-nom">{esc(nom)}</span>'
@@ -2691,13 +2720,30 @@ def bandeau_utilisateur(sess) -> str:
         'background:#fdecea;border-radius:999px;padding:7px 13px;transition:.15s}'
         '#rsu-bandeau .rsu-b-out:hover{background:#c0392b;color:#fff;'
         'border-color:#c0392b}'
+        '#rsu-bandeau .rsu-b-toggle{width:30px;height:30px;border-radius:50%;flex:none;'
+        'display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;'
+        'border:1px solid #c7dbf7;background:#eaf1fd;color:#1558c9;transition:.15s}'
+        '#rsu-bandeau .rsu-b-toggle:hover{background:#1558c9;color:#fff;border-color:#1558c9}'
+        # État REPLIÉ : ne reste que le bouton + les initiales ; tout le reste caché.
+        '#rsu-bandeau.rsu-col .rsu-b-txt,#rsu-bandeau.rsu-col a{display:none!important}'
         '@media print{#rsu-bandeau{display:none!important}}'
         '@media (max-width:560px){#rsu-bandeau .rsu-b-txt{display:none}'
         '#rsu-bandeau .rsu-b-out span,#rsu-bandeau .rsu-b-home span,'
         '#rsu-bandeau .rsu-b-key span,#rsu-bandeau .rsu-b-doc span,'
         '#rsu-bandeau .rsu-b-jr span,#rsu-bandeau .rsu-b-cs span,'
         '#rsu-bandeau .rsu-b-pf span{display:none}}'
-        '</style>')
+        '</style>'
+        # Bascule replier/déplier (état mémorisé ; replié par défaut sur petit écran).
+        '<script>(function(){var b=document.getElementById("rsu-bandeau");if(!b)return;'
+        'var t=b.querySelector(".rsu-b-toggle");if(!t)return;var K="rsu_bandeau_col";'
+        'function set(c){b.classList.toggle("rsu-col",c);'
+        't.setAttribute("aria-expanded",String(!c));'
+        'try{localStorage.setItem(K,c?"1":"0");}catch(e){}}'
+        'var v=null;try{v=localStorage.getItem(K);}catch(e){}'
+        'var init=(v===null)?(window.matchMedia&&window.matchMedia("(max-width:700px)").matches)'
+        ':(v==="1");set(!!init);'
+        't.addEventListener("click",function(){set(!b.classList.contains("rsu-col"));});})();'
+        '</script>')
 
 
 # ---------------------------------------------------------------------------

@@ -66,6 +66,11 @@ body { font-family:'Bricolage Grotesque',sans-serif; font-size:0.875rem; backgro
 .topbar-title { font-size:1rem; font-weight:700; color:var(--text); }
 .topbar-sub   { font-size:0.6875rem; color:var(--muted); margin-top:1px; }
 .topbar-actions { display:flex; align-items:center; gap:0.5rem; }
+/* Bouton ☰ (injecté par le script global, web uniquement) : replie/déplie la
+   barre latérale des sections. Masquée -> le contenu prend toute la largeur. */
+.rsu-nav-toggle { flex:none; width:2rem; height:2rem; border-radius:0.5rem; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:1.1rem; line-height:1; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; margin-right:0.75rem; transition:all 0.15s; }
+.rsu-nav-toggle:hover { border-color:var(--accent); color:var(--accent); }
+body.rsu-nav-col .sidebar { display:none; }
 .btn { display:inline-flex;align-items:center;gap:0.375rem; padding:0.4375rem 0.875rem; border-radius:0.5rem; font-size:0.75rem;font-weight:600; cursor:pointer;border:none; font-family:inherit; transition:all 0.15s; }
 .btn-primary { background:var(--accent);color:#fff; }
 .btn-primary:hover { background:#1d4ed8; }
