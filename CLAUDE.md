@@ -1491,3 +1491,86 @@ après arrêt de l'instance de test, systemd a repris le port et l'app est stabl
   `RSU_PREFIXE` ; le proxy doit **conserver** le préfixe (`/rsu-web/` → `:8000/rsu-web/`).
 - **Toujours libérer le port 8000** avant un test (voir aussi la leçon « Tests locaux »
   plus haut) — une instance résiduelle fausse les résultats.
+
+---
+
+## Affichage adaptatif / responsive (journal 2026-09-02)
+
+**Problème** : l'app était dessinée **100 % en pixels fixes** → « bien chez moi, mais
+trop grand/petit ailleurs » selon la **résolution** et la **mise à l'échelle Windows**
+(125/150 %) de chaque poste. Corrigé en **deux mécanismes complémentaires** qui
+cohabitent via un **marqueur CSS** (pas de double mise à l'échelle).
+
+### Phase 1 — normalisation globale (pansement, `serveur_app._STYLE_RESPONSIVE`)
+- Injectée par `_html()` juste **avant `</head>`** sur **TOUTE** page (rapport et login
+  compris ; après les styles de la page, `charset` reste en tête). `_RE_HEAD_FIN`.
+- Un petit script ajuste l'**échelle** (`document.documentElement.style.zoom`) selon la
+  largeur d'écran, **uniquement vers le bas** : écrans **≥ `_UI_LARGEUR_REF`** (défaut
+  **1200**, réglable par env `RSU_UI_LARGEUR_REF`) **inchangés** (le poste de dev reste
+  identique) ; plus petits réduits jusqu'à `_UI_ZOOM_MIN` (0.78). Garde-fous
+  `img{max-width:100%}` + `text-size-adjust:100%`.
+
+### Phase 2 — refonte fluide (px → rem + base fluide)
+- Chaque feuille convertie porte sur `:root` : **`--rsu-fluid:1`** (le script Phase 1 lit
+  cette variable et **NE zoome PAS** cette page → pas de double échelle) et
+  **`font-size:clamp(12px, 0.22vw + 10.2px, 14px)`** (plafonnée à **14px** = la taille
+  d'origine, jamais plus grande ; réduite jusqu'à ~12px sur petits écrans — RÉGLAGE de la
+  base = ces 3 nombres, à changer PARTOUT à l'identique, cf. plus bas). Toutes les tailles
+  sont en **rem** → suivent cette base. Bordures fines (1-2px), ombres, letter-spacing et
+  **conditions de media queries** restent en **px** ; points de rupture ajoutés
+  (rapport.css : 1024/860/480px).
+- **Converti (fluide)** : `assets/rapport.css` (dashboard), `admin._STYLE` (admin + menus
+  Coordonnateur/Superviseur + Traitement/Transcription/Logistique qui l'incluent),
+  `equipes._CSS_CHOIX`, `transcription._CSS_CHOIX`, `logistique._CSS`,
+  `serveur_app._STYLE_JOURNAL`/`_STYLE_SUIVI`/`_STYLE_CONSIGNE_EXTRA`, `manuel_ui.CSS`, et
+  les styles inline de `page_login`/`page_selection`/`page_equipe_technique`/
+  `page_motdepasse`. Les fragments (`_CSS_CHOIX`, `_CSS`, `_STYLE_SUIVI`,
+  `_STYLE_CONSIGNE_EXTRA`) sont **convertis sans `:root`** : ils héritent du `:root` de
+  `admin._STYLE`/`_STYLE_JOURNAL` avec lesquels ils sont toujours servis.
+- **Pages f-string** (accolades CSS échappées `{{ }}`) : `page_accueil`, `page_suivi`
+  (récap), `page_vad_indisponible` — converties AUSSI (le `:root` injecté y est écrit à
+  accolades DOUBLÉES `:root{{...}}` ; `ast.parse` détecte toute erreur d'accolade).
+  → **toutes les pages de l'app sont fluides** ; le zoom Phase 1 ne sert plus que de
+  filet (il no-op sur toute page portant `--rsu-fluid`).
+
+### Révision 2026-09-02 (retour utilisateur)
+Base fluide d'abord réglée trop haut (≤17px) → **police trop grande** ; abaissée à
+`clamp(12px, 0.22vw + 10.2px, 14px)`. Dashboard **cassé sur smartphone** (barre latérale
+fixe → contenu coupé) → sous **860px**, abandon du gabarit plein écran (`height:100vh` +
+`overflow:hidden`) au profit d'un **défilement naturel** : barre latérale compacte en haut
+(`max-height:42vh`, défilante), contenu dessous, KPI 1 colonne <480px. ⚠️ `rapport.css`
+étant mis en cache 24h (`/assets` `max-age=86400`), tester avec **Ctrl+F5** après un
+redéploiement.
+
+### Menus repliables (2026-09-02)
+- **Bandeau** (haut-droite) : bouton **☰** (`.rsu-b-toggle`, 1er enfant de `#rsu-bandeau`)
+  qui bascule la classe `.rsu-col` (CSS : cache `.rsu-b-txt` + tous les `a`, ne laisse que
+  bouton + initiales). Script inline dans `bandeau_utilisateur`, état mémorisé
+  (`localStorage rsu_bandeau_col`), **replié par défaut ≤700px**.
+- **Barre latérale des sections** (dashboard) : bouton **☰** (`.rsu-nav-toggle`) injecté
+  dans `.topbar` par le script global (`_STYLE_RESPONSIVE`, fonction `nav()`), **web
+  uniquement** (n'agit que si `.sidebar`+`.topbar` existent → l'exe, sans ce script, garde
+  sa barre). Bascule `body.rsu-nav-col` → `.sidebar{display:none}` (CSS dans rapport.css).
+  État mémorisé (`localStorage rsu_nav_col`), **replié par défaut ≤860px**.
+
+### ⚠️ Resync .exe
+`assets/rapport.css` est partagé avec `..\RSU_Rapport\` (cf. §1) → **recopier** la version
+fluide. Le `--rsu-fluid` et la base `clamp` y sont bénins (l'exe n'injecte pas le script
+Phase 1 ; à écran fixe, la base ≈ 16px).
+
+### Vérifié en HTTP réel (jamais la vraie base)
+Instance de test **port 8011** contre une **COPIE** de `rsu_local.sqlite`
+(`RSU_SQLITE=<copie>`, `serveur_app.PORT=8011`), toutes les pages → **200** avec marqueur
+`--rsu-fluid` présent. Le rendu **visuel** (échelle sur petits écrans) est à valider sur
+de vrais postes / en rétrécissant la fenêtre.
+
+### Pièges rencontrés
+- **`%` de formatage Python vs `100%` du CSS** : une chaîne CSS contenant `100%` passée à
+  `"...%d..." % x` lève `unsupported format character` → **concaténer**, pas `%`-formater.
+- **`pkill -f "lancer_test.py"`** tue le **shell courant** (sa ligne de commande contient
+  la chaîne) → exit 144 ; gérer le PID via `$!` à la place.
+- **`sleep` de premier plan bloqué** dans l'environnement d'assistance → attendre le
+  serveur via `curl --retry --retry-connrefused --retry-delay`, pas `sleep`.
+- **Convertisseur px→rem** : gérer les décimaux **sans zéro initial** (`.5px`) avec
+  `(\d*\.?\d+)px` (sinon `.5px` → `.0.3125rem`, CSS cassé) ; **protéger** les préludes de
+  media queries (`@media ... {`) pour garder les points de rupture en px.

@@ -343,17 +343,17 @@ def _entete() -> str:
 
 _CSS_CHOIX = """
 <style>
-.choix{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
-  gap:16px;margin-top:16px}
+.choix{display:grid;grid-template-columns:repeat(auto-fit,minmax(16.25rem,1fr));
+  gap:1rem;margin-top:1rem}
 .ca{display:block;text-decoration:none;color:inherit;background:#fff;
-  border:1.5px solid #e2e8f0;border-radius:14px;padding:20px 20px 18px;
+  border:1.5px solid #e2e8f0;border-radius:0.875rem;padding:1.25rem 1.25rem 1.125rem;
   transition:.15s;position:relative}
-.ca:hover{border-color:#2563eb;box-shadow:0 12px 26px rgba(37,99,235,.14);
+.ca:hover{border-color:#2563eb;box-shadow:0 0.75rem 1.625rem rgba(37,99,235,.14);
   transform:translateY(-2px)}
-.ca .ic{font-size:30px;line-height:1;margin-bottom:10px}
-.ca .t{font-weight:700;font-size:16px;margin-bottom:6px}
-.ca .d{font-size:13px;color:#64748b;line-height:1.5}
-.ca .go{margin-top:12px;font-weight:700;color:#2563eb;font-size:13px}
+.ca .ic{font-size:1.875rem;line-height:1;margin-bottom:0.625rem}
+.ca .t{font-weight:700;font-size:1rem;margin-bottom:0.375rem}
+.ca .d{font-size:0.8125rem;color:#64748b;line-height:1.5}
+.ca .go{margin-top:0.75rem;font-weight:700;color:#2563eb;font-size:0.8125rem}
 </style>"""
 
 

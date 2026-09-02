@@ -501,22 +501,24 @@ def page_accueil() -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rapport RSU 2026 — Accueil</title>
 <style>
-  body{{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:760px;margin:36px auto;
-       padding:0 16px;color:#1c2430;line-height:1.5}}
-  h1{{font-size:1.5rem;margin-bottom:4px}}
+  :root{{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px)}}
+
+  body{{font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:47.5rem;margin:2.25rem auto;
+       padding:0 1rem;color:#1c2430;line-height:1.5}}
+  h1{{font-size:1.5rem;margin-bottom:0.25rem}}
   .sous{{color:#5a6675;margin-top:0}}
-  details{{border:1px solid #dce3ea;border-radius:8px;margin:8px 0;padding:6px 12px}}
+  details{{border:1px solid #dce3ea;border-radius:0.5rem;margin:0.5rem 0;padding:0.375rem 0.75rem}}
   summary{{cursor:pointer;font-weight:600}}
   .n{{color:#8a97a6;font-weight:400}}
-  ul{{list-style:none;padding-left:8px;margin:8px 0}}
-  li{{padding:4px 0}}
+  ul{{list-style:none;padding-left:0.5rem;margin:0.5rem 0}}
+  li{{padding:0.25rem 0}}
   a{{color:#1b6ef3;text-decoration:none}} a:hover{{text-decoration:underline}}
-  .code{{color:#9aa6b3;font-size:.8rem;margin-left:6px}}
-  .note{{background:#eef6ff;border:1px solid #cfe2ff;border-radius:8px;padding:12px;
-         font-size:.88rem;margin:18px 0}}
-  .barre{{display:flex;justify-content:flex-end;margin-bottom:4px}}
-  .barre a{{font-size:.85rem;color:#5a6675;border:1px solid #dce3ea;border-radius:8px;
-    padding:5px 12px}}
+  .code{{color:#9aa6b3;font-size:.8rem;margin-left:0.375rem}}
+  .note{{background:#eef6ff;border:1px solid #cfe2ff;border-radius:0.5rem;padding:0.75rem;
+         font-size:.88rem;margin:1.125rem 0}}
+  .barre{{display:flex;justify-content:flex-end;margin-bottom:0.25rem}}
+  .barre a{{font-size:.85rem;color:#5a6675;border:1px solid #dce3ea;border-radius:0.5rem;
+    padding:0.3125rem 0.75rem}}
   .barre a:hover{{background:#f4f7fb;text-decoration:none}}
 </style></head><body>
 <h1>Rapport RSU 2026</h1>
@@ -543,11 +545,13 @@ def page_login(erreur: bool = False) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Connexion</title>
 <style>
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
+
   *{box-sizing:border-box}
   :root{--bleu:#1b6ef3;--bleu-f:#1558c9;--vert:#17a398;--nuit:#0d2b4e;--texte:#1c2430}
-  html,body{height:100%}
+  html,body{min-height:100%}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:var(--texte);margin:0;
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:22px;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
     line-height:1.5;background:#0d2b4e}
 
   /* Image officielle RSU en FOND PLEINE PAGE (couche fixe + zoom lent) */
@@ -558,64 +562,64 @@ def page_login(erreur: bool = False) -> str:
     rgba(13,43,78,.42) 0%,rgba(21,88,201,.26) 55%,rgba(23,163,152,.30) 130%)}
 
   /* Cadre : deux colonnes (visuel + formulaire), posé sur l'image */
-  .cadre{position:relative;z-index:2;display:flex;width:100%;max-width:940px;
-    background:transparent;border-radius:20px;overflow:hidden;
-    box-shadow:0 30px 70px rgba(0,0,0,.42);animation:apparaitre .7s ease both}
+  .cadre{position:relative;z-index:2;display:flex;width:100%;max-width:58.75rem;
+    background:transparent;border-radius:1.25rem;overflow:hidden;
+    box-shadow:0 1.875rem 4.375rem rgba(0,0,0,.42);animation:apparaitre .7s ease both}
 
   /* Colonne gauche : panneau illustré animé (translucide, laisse voir l'image) */
-  .visuel{position:relative;flex:1 1 46%;min-width:0;color:#fff;padding:38px 34px;
+  .visuel{position:relative;flex:1 1 46%;min-width:0;color:#fff;padding:2.375rem 2.125rem;
     display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;
     background:linear-gradient(140deg,rgba(13,43,78,.72) 0%,rgba(21,88,201,.5) 55%,
       rgba(23,163,152,.5) 130%);
     background-size:180% 180%;animation:degrade 12s ease infinite alternate}
   .visuel::before,.visuel::after{content:"";position:absolute;border-radius:50%;
     background:rgba(255,255,255,.09);filter:blur(2px)}
-  .visuel::before{width:220px;height:220px;top:-70px;right:-60px;
+  .visuel::before{width:13.75rem;height:13.75rem;top:-4.375rem;right:-3.75rem;
     animation:flotter 9s ease-in-out infinite}
-  .visuel::after{width:150px;height:150px;bottom:-50px;left:-40px;
+  .visuel::after{width:9.375rem;height:9.375rem;bottom:-3.125rem;left:-2.5rem;
     animation:flotter 7s ease-in-out infinite reverse}
-  .v-haut{position:relative;z-index:2;display:flex;align-items:center;gap:12px}
-  .badge{width:52px;height:52px;border-radius:14px;flex:none;background:rgba(255,255,255,.16);
+  .v-haut{position:relative;z-index:2;display:flex;align-items:center;gap:0.75rem}
+  .badge{width:3.25rem;height:3.25rem;border-radius:0.875rem;flex:none;background:rgba(255,255,255,.16);
     border:1px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;
-    font-weight:800;letter-spacing:.5px;font-size:1.05rem;backdrop-filter:blur(4px)}
+    font-weight:800;letter-spacing:.5px;font-size:1.05rem;backdrop-filter:blur(0.25rem)}
   .v-haut .titre{font-size:1.18rem;font-weight:700;margin:0}
   .v-haut .st{font-size:.82rem;opacity:.85;margin:0}
-  .scene{position:relative;z-index:2;align-self:center;width:100%;max-width:320px;margin:8px 0}
+  .scene{position:relative;z-index:2;align-self:center;width:100%;max-width:20rem;margin:0.5rem 0}
   .accroche{position:relative;z-index:2}
-  .accroche h2{font-size:1.32rem;line-height:1.3;margin:0 0 14px}
-  .puces{list-style:none;padding:0;margin:0;display:grid;gap:10px}
-  .puces li{display:flex;align-items:center;gap:11px;font-size:.92rem;opacity:0;
+  .accroche h2{font-size:1.32rem;line-height:1.3;margin:0 0 0.875rem}
+  .puces{list-style:none;padding:0;margin:0;display:grid;gap:0.625rem}
+  .puces li{display:flex;align-items:center;gap:0.6875rem;font-size:.92rem;opacity:0;
     animation:glisser .6s ease forwards}
   .puces li:nth-child(1){animation-delay:.35s}
   .puces li:nth-child(2){animation-delay:.5s}
   .puces li:nth-child(3){animation-delay:.65s}
-  .ico{width:34px;height:34px;flex:none;border-radius:10px;background:rgba(255,255,255,.15);
+  .ico{width:2.125rem;height:2.125rem;flex:none;border-radius:0.625rem;background:rgba(255,255,255,.15);
     border:1px solid rgba(255,255,255,.28);display:flex;align-items:center;justify-content:center}
 
   /* Colonne droite : formulaire (verre dépoli translucide sur l'image) */
-  .carte{flex:1 1 54%;min-width:0;padding:44px 40px;display:flex;flex-direction:column;
+  .carte{flex:1 1 54%;min-width:0;padding:2.75rem 2.5rem;display:flex;flex-direction:column;
     justify-content:center;background:rgba(255,255,255,.86);
-    backdrop-filter:blur(12px) saturate(120%);-webkit-backdrop-filter:blur(12px) saturate(120%)}
-  .bienvenue{font-size:1.5rem;font-weight:700;margin:0 0 4px}
-  .sous{color:#5a6675;margin:0 0 24px;font-size:.94rem}
-  label{display:block;font-weight:600;font-size:.86rem;margin:14px 0 6px}
+    backdrop-filter:blur(0.75rem) saturate(120%);-webkit-backdrop-filter:blur(0.75rem) saturate(120%)}
+  .bienvenue{font-size:1.5rem;font-weight:700;margin:0 0 0.25rem}
+  .sous{color:#5a6675;margin:0 0 1.5rem;font-size:.94rem}
+  label{display:block;font-weight:600;font-size:.86rem;margin:0.875rem 0 0.375rem}
   .champ{position:relative}
-  .champ svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);opacity:.45}
-  input{width:100%;padding:12px 14px 12px 42px;font-size:1rem;color:var(--texte);
-    background:#f7f9fc;border:1.5px solid #e1e7ef;border-radius:11px;outline:none;
+  .champ svg{position:absolute;left:0.75rem;top:50%;transform:translateY(-50%);opacity:.45}
+  input{width:100%;padding:0.75rem 0.875rem 0.75rem 2.625rem;font-size:1rem;color:var(--texte);
+    background:#f7f9fc;border:1.5px solid #e1e7ef;border-radius:0.6875rem;outline:none;
     transition:.18s}
-  input:focus{border-color:var(--bleu);background:#fff;box-shadow:0 0 0 4px rgba(27,110,243,.14)}
-  button.principal{width:100%;margin-top:24px;padding:13px;font-size:1.02rem;font-weight:700;
-    color:#fff;border:none;border-radius:11px;cursor:pointer;letter-spacing:.3px;
+  input:focus{border-color:var(--bleu);background:#fff;box-shadow:0 0 0 0.25rem rgba(27,110,243,.14)}
+  button.principal{width:100%;margin-top:1.5rem;padding:0.8125rem;font-size:1.02rem;font-weight:700;
+    color:#fff;border:none;border-radius:0.6875rem;cursor:pointer;letter-spacing:.3px;
     background:linear-gradient(135deg,var(--bleu),var(--bleu-f));
-    box-shadow:0 10px 22px rgba(27,110,243,.30);transition:.18s}
-  button.principal:hover{transform:translateY(-2px);box-shadow:0 14px 28px rgba(27,110,243,.38)}
+    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.30);transition:.18s}
+  button.principal:hover{transform:translateY(-2px);box-shadow:0 0.875rem 1.75rem rgba(27,110,243,.38)}
   button.principal:active{transform:translateY(0)}
-  .message{display:none;margin-top:16px;padding:11px 13px;border-radius:11px;font-size:.88rem;
+  .message{display:none;margin-top:1rem;padding:0.6875rem 0.8125rem;border-radius:0.6875rem;font-size:.88rem;
     background:#fdecea;border:1px solid #f5c6c2;color:#c0392b}
   .message.visible{display:block;animation:glisser .3s ease both}
-  .pied{margin-top:26px;font-size:.78rem;color:#9aa6b3;text-align:center;
-    display:flex;align-items:center;justify-content:center;gap:6px}
+  .pied{margin-top:1.625rem;font-size:.78rem;color:#9aa6b3;text-align:center;
+    display:flex;align-items:center;justify-content:center;gap:0.375rem}
 
   /* Animations SVG (parties de la scène) */
   .flot{animation:flotter 6s ease-in-out infinite;transform-origin:center}
@@ -623,19 +627,19 @@ def page_login(erreur: bool = False) -> str:
   .anneau{transform-box:fill-box;transform-origin:center;animation:pulse 2.6s ease-out infinite}
   .anneau2{transform-box:fill-box;transform-origin:center;animation:pulse 2.6s ease-out 1.3s infinite}
 
-  @keyframes apparaitre{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
-  @keyframes glisser{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:none}}
-  @keyframes flotter{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+  @keyframes apparaitre{from{opacity:0;transform:translateY(1.125rem)}to{opacity:1;transform:none}}
+  @keyframes glisser{from{opacity:0;transform:translateX(-0.75rem)}to{opacity:1;transform:none}}
+  @keyframes flotter{0%,100%{transform:translateY(0)}50%{transform:translateY(-0.625rem)}}
   @keyframes degrade{0%{background-position:0% 50%}100%{background-position:100% 50%}}
   @keyframes pulse{0%{transform:scale(.5);opacity:.7}80%{transform:scale(2.4);opacity:0}100%{opacity:0}}
   @keyframes zoomlent{0%{transform:scale(1)}100%{transform:scale(1.12)}}
 
   /* Responsive : sur petit écran, on empile et on masque le panneau visuel lourd */
   @media (max-width:820px){
-    .cadre{flex-direction:column;max-width:440px}
-    .visuel{padding:26px 26px 22px}
+    .cadre{flex-direction:column;max-width:27.5rem}
+    .visuel{padding:1.625rem 1.625rem 1.375rem}
     .scene,.accroche h2{display:none}
-    .carte{padding:32px 28px}
+    .carte{padding:2rem 1.75rem}
   }
   @media (prefers-reduced-motion:reduce){
     *{animation:none!important}
@@ -1000,63 +1004,65 @@ def page_selection(erreur: str = "", utilisateur=None, op=None) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Zone & type de suivi</title>
 <style>
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
+
   *{box-sizing:border-box}
   :root{--bleu:#1b6ef3;--bleu-f:#1558c9;--vert:#17a398;--nuit:#0d2b4e;--texte:#1c2430}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:var(--texte);margin:0;
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:22px;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
     line-height:1.5;background:#0d2b4e}
   .fond{position:fixed;inset:0;z-index:0;background:url(/img/accueil) center/cover no-repeat;
     animation:zoomlent 22s ease-in-out infinite alternate}
   .voile{position:fixed;inset:0;z-index:0;background:linear-gradient(135deg,
     rgba(13,43,78,.58) 0%,rgba(21,88,201,.42) 55%,rgba(23,163,152,.44) 130%)}
 
-  .carte{position:relative;z-index:2;width:100%;max-width:640px;
-    background:rgba(255,255,255,.90);backdrop-filter:blur(14px) saturate(120%);
-    -webkit-backdrop-filter:blur(14px) saturate(120%);border-radius:20px;
-    box-shadow:0 30px 70px rgba(0,0,0,.42);padding:32px 34px;
-    animation:apparaitre .6s ease both;max-height:calc(100vh - 44px);overflow:auto}
-  .tete{display:flex;align-items:center;gap:12px;margin-bottom:4px}
-  .badge{width:46px;height:46px;border-radius:12px;flex:none;color:#fff;font-weight:800;
+  .carte{position:relative;z-index:2;width:100%;max-width:40rem;
+    background:rgba(255,255,255,.90);backdrop-filter:blur(0.875rem) saturate(120%);
+    -webkit-backdrop-filter:blur(0.875rem) saturate(120%);border-radius:1.25rem;
+    box-shadow:0 1.875rem 4.375rem rgba(0,0,0,.42);padding:2rem 2.125rem;
+    animation:apparaitre .6s ease both;max-height:calc(100vh - 2.75rem);overflow:auto}
+  .tete{display:flex;align-items:center;gap:0.75rem;margin-bottom:0.25rem}
+  .badge{width:2.875rem;height:2.875rem;border-radius:0.75rem;flex:none;color:#fff;font-weight:800;
     font-size:1rem;display:flex;align-items:center;justify-content:center;
     background:linear-gradient(135deg,var(--bleu),var(--bleu-f))}
   h1{font-size:1.3rem;margin:0}
   .st{color:#5a6675;font-size:.86rem;margin:0}
   .lien-haut{margin-left:auto;font-size:.82rem;color:#5a6675;text-decoration:none;
-    border:1px solid #dce3ea;border-radius:8px;padding:5px 11px;background:#fff}
+    border:1px solid #dce3ea;border-radius:0.5rem;padding:0.3125rem 0.6875rem;background:#fff}
   .lien-haut:hover{background:#f4f7fb}
 
-  fieldset{border:none;padding:0;margin:22px 0 0}
+  fieldset{border:none;padding:0;margin:1.375rem 0 0}
   legend{font-weight:700;font-size:.82rem;text-transform:uppercase;letter-spacing:.6px;
-    color:#1558c9;padding:0;margin-bottom:10px;display:flex;align-items:center;gap:8px}
-  .num{width:22px;height:22px;border-radius:50%;background:#e7f0ff;color:#1558c9;
+    color:#1558c9;padding:0;margin-bottom:0.625rem;display:flex;align-items:center;gap:0.5rem}
+  .num{width:1.375rem;height:1.375rem;border-radius:50%;background:#e7f0ff;color:#1558c9;
     display:inline-flex;align-items:center;justify-content:center;font-size:.78rem;flex:none}
-  .grille{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  label.champ-l{display:block;font-weight:600;font-size:.84rem;margin:0 0 5px}
-  select,input[type=text]{width:100%;padding:11px 12px;font-size:.98rem;color:var(--texte);
-    background:#f7f9fc;border:1.5px solid #e1e7ef;border-radius:10px;outline:none;transition:.15s}
+  .grille{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem}
+  label.champ-l{display:block;font-weight:600;font-size:.84rem;margin:0 0 0.3125rem}
+  select,input[type=text]{width:100%;padding:0.6875rem 0.75rem;font-size:.98rem;color:var(--texte);
+    background:#f7f9fc;border:1.5px solid #e1e7ef;border-radius:0.625rem;outline:none;transition:.15s}
   select:focus,input[type=text]:focus{border-color:var(--bleu);background:#fff;
-    box-shadow:0 0 0 3px rgba(27,110,243,.14)}
+    box-shadow:0 0 0 0.1875rem rgba(27,110,243,.14)}
   select:disabled{background:#eef1f5;color:#9aa6b3;cursor:not-allowed}
   .pleine{grid-column:1 / -1}
 
-  .options{display:grid;gap:9px}
-  .opt{display:flex;align-items:flex-start;gap:11px;border:1.5px solid #e1e7ef;border-radius:11px;
-    padding:11px 13px;cursor:pointer;transition:.15s;background:#fbfcfe}
+  .options{display:grid;gap:0.5625rem}
+  .opt{display:flex;align-items:flex-start;gap:0.6875rem;border:1.5px solid #e1e7ef;border-radius:0.6875rem;
+    padding:0.6875rem 0.8125rem;cursor:pointer;transition:.15s;background:#fbfcfe}
   .opt:hover{border-color:#bcd3f7;background:#f5f9ff}
-  .opt input{margin-top:3px;accent-color:var(--bleu)}
+  .opt input{margin-top:0.1875rem;accent-color:var(--bleu)}
   .opt:has(input:checked){border-color:var(--bleu);background:#eef5ff;
-    box-shadow:0 0 0 3px rgba(27,110,243,.10)}
+    box-shadow:0 0 0 0.1875rem rgba(27,110,243,.10)}
   .opt .t{font-weight:600;font-size:.93rem}
   .opt .d{font-size:.8rem;color:#6b7787}
 
-  .suivis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
-  .suivi{position:relative;border:1.5px solid #e1e7ef;border-radius:14px;padding:16px 14px;
+  .suivis{display:grid;grid-template-columns:repeat(auto-fit,minmax(8.75rem,1fr));gap:0.75rem}
+  .suivi{position:relative;border:1.5px solid #e1e7ef;border-radius:0.875rem;padding:1rem 0.875rem;
     cursor:pointer;text-align:center;transition:.15s;background:#fbfcfe}
   .suivi:hover{border-color:#bcd3f7;background:#f5f9ff}
   .suivi input{position:absolute;opacity:0;pointer-events:none}
   .suivi:has(input:checked){border-color:var(--bleu);background:#eef5ff;
-    box-shadow:0 0 0 3px rgba(27,110,243,.12)}
-  .suivi .ic{width:44px;height:44px;margin:0 auto 8px;border-radius:12px;display:flex;
+    box-shadow:0 0 0 0.1875rem rgba(27,110,243,.12)}
+  .suivi .ic{width:2.75rem;height:2.75rem;margin:0 auto 0.5rem;border-radius:0.75rem;display:flex;
     align-items:center;justify-content:center;background:linear-gradient(135deg,#eaf2ff,#dfeeff);
     color:#1558c9}
   .suivi:has(input:checked) .ic{background:linear-gradient(135deg,var(--bleu),var(--bleu-f));
@@ -1064,16 +1070,16 @@ def page_selection(erreur: str = "", utilisateur=None, op=None) -> str:
   .suivi .t{font-weight:700;font-size:.98rem}
   .suivi .d{font-size:.78rem;color:#6b7787;margin-top:2px}
 
-  button.principal{width:100%;margin-top:26px;padding:13px;font-size:1.02rem;font-weight:700;
-    color:#fff;border:none;border-radius:11px;cursor:pointer;letter-spacing:.3px;
+  button.principal{width:100%;margin-top:1.625rem;padding:0.8125rem;font-size:1.02rem;font-weight:700;
+    color:#fff;border:none;border-radius:0.6875rem;cursor:pointer;letter-spacing:.3px;
     background:linear-gradient(135deg,var(--bleu),var(--bleu-f));
-    box-shadow:0 10px 22px rgba(27,110,243,.30);transition:.18s}
-  button.principal:hover{transform:translateY(-2px);box-shadow:0 14px 28px rgba(27,110,243,.38)}
-  .message{display:none;margin-top:16px;padding:11px 13px;border-radius:11px;font-size:.88rem;
+    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.30);transition:.18s}
+  button.principal:hover{transform:translateY(-2px);box-shadow:0 0.875rem 1.75rem rgba(27,110,243,.38)}
+  .message{display:none;margin-top:1rem;padding:0.6875rem 0.8125rem;border-radius:0.6875rem;font-size:.88rem;
     background:#fdecea;border:1px solid #f5c6c2;color:#c0392b}
   .message.visible{display:block}
 
-  @keyframes apparaitre{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+  @keyframes apparaitre{from{opacity:0;transform:translateY(1rem)}to{opacity:1;transform:none}}
   @keyframes zoomlent{0%{transform:scale(1)}100%{transform:scale(1.12)}}
   @media (max-width:560px){.grille,.suivis{grid-template-columns:1fr}}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
@@ -1158,34 +1164,36 @@ def page_suivi(sel: dict) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Suivi {esc(libelle_suivi)}</title>
 <style>
+  :root{{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px)}}
+
   body{{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:22px;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
     line-height:1.55;background:#0d2b4e}}
   .fond{{position:fixed;inset:0;z-index:0;background:url(/img/accueil) center/cover no-repeat}}
   .voile{{position:fixed;inset:0;z-index:0;background:linear-gradient(135deg,
     rgba(13,43,78,.62),rgba(21,88,201,.44) 55%,rgba(23,163,152,.46))}}
-  .carte{{position:relative;z-index:2;width:100%;max-width:560px;background:rgba(255,255,255,.92);
-    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-radius:20px;
-    box-shadow:0 30px 70px rgba(0,0,0,.42);padding:30px 32px;animation:app .6s ease both}}
-  .tete{{display:flex;align-items:center;gap:12px;margin-bottom:14px}}
-  .badge{{width:46px;height:46px;border-radius:12px;color:#fff;font-weight:800;flex:none;
+  .carte{{position:relative;z-index:2;width:100%;max-width:35rem;background:rgba(255,255,255,.92);
+    backdrop-filter:blur(0.875rem);-webkit-backdrop-filter:blur(0.875rem);border-radius:1.25rem;
+    box-shadow:0 1.875rem 4.375rem rgba(0,0,0,.42);padding:1.875rem 2rem;animation:app .6s ease both}}
+  .tete{{display:flex;align-items:center;gap:0.75rem;margin-bottom:0.875rem}}
+  .badge{{width:2.875rem;height:2.875rem;border-radius:0.75rem;color:#fff;font-weight:800;flex:none;
     display:flex;align-items:center;justify-content:center;
     background:linear-gradient(135deg,#1b6ef3,#1558c9)}}
   h1{{font-size:1.28rem;margin:0}}
   .ruban{{display:inline-block;margin-top:2px;font-size:.78rem;font-weight:700;color:#0f9d84;
-    background:#e6f7f2;border:1px solid #b8e6da;border-radius:999px;padding:2px 10px}}
-  dl{{margin:18px 0 0;display:grid;grid-template-columns:auto 1fr;gap:10px 16px}}
+    background:#e6f7f2;border:1px solid #b8e6da;border-radius:62.4375rem;padding:2px 0.625rem}}
+  dl{{margin:1.125rem 0 0;display:grid;grid-template-columns:auto 1fr;gap:0.625rem 1rem}}
   dt{{color:#5a6675;font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.4px}}
   dd{{margin:0;font-weight:600}}
-  .note{{margin-top:20px;background:#eef6ff;border:1px solid #cfe2ff;border-radius:11px;
-    padding:12px 14px;font-size:.86rem;color:#3a5a80}}
-  .actions{{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}}
-  .btn{{flex:1;min-width:150px;text-align:center;padding:12px;border-radius:11px;font-weight:700;
+  .note{{margin-top:1.25rem;background:#eef6ff;border:1px solid #cfe2ff;border-radius:0.6875rem;
+    padding:0.75rem 0.875rem;font-size:.86rem;color:#3a5a80}}
+  .actions{{display:flex;gap:0.625rem;margin-top:1.375rem;flex-wrap:wrap}}
+  .btn{{flex:1;min-width:9.375rem;text-align:center;padding:0.75rem;border-radius:0.6875rem;font-weight:700;
     text-decoration:none;cursor:pointer;border:1.5px solid #dce3ea;color:#1c2430;background:#fff}}
   .btn:hover{{background:#f4f7fb}}
   .btn.p{{color:#fff;border:none;background:linear-gradient(135deg,#1b6ef3,#1558c9);
-    box-shadow:0 10px 22px rgba(27,110,243,.28)}}
-  @keyframes app{{from{{opacity:0;transform:translateY(16px)}}to{{opacity:1;transform:none}}}}
+    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.28)}}
+  @keyframes app{{from{{opacity:0;transform:translateY(1rem)}}to{{opacity:1;transform:none}}}}
 </style></head><body>
   <div class="fond"></div><div class="voile"></div>
   <div class="carte">
@@ -1223,32 +1231,34 @@ def page_vad_indisponible(sel: dict) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Visite à domicile</title>
 <style>
+  :root{{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px)}}
+
   body{{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:22px;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
     line-height:1.55;background:#0d2b4e}}
   .fond{{position:fixed;inset:0;z-index:0;background:url(/img/accueil) center/cover no-repeat}}
   .voile{{position:fixed;inset:0;z-index:0;background:linear-gradient(135deg,
     rgba(13,43,78,.66),rgba(21,88,201,.46) 55%,rgba(23,163,152,.48))}}
-  .carte{{position:relative;z-index:2;width:100%;max-width:520px;text-align:center;
-    background:rgba(255,255,255,.93);backdrop-filter:blur(14px);
-    -webkit-backdrop-filter:blur(14px);border-radius:20px;
-    box-shadow:0 30px 70px rgba(0,0,0,.42);padding:38px 34px;animation:app .6s ease both}}
-  .ic{{width:76px;height:76px;margin:0 auto 16px;border-radius:20px;display:flex;
+  .carte{{position:relative;z-index:2;width:100%;max-width:32.5rem;text-align:center;
+    background:rgba(255,255,255,.93);backdrop-filter:blur(0.875rem);
+    -webkit-backdrop-filter:blur(0.875rem);border-radius:1.25rem;
+    box-shadow:0 1.875rem 4.375rem rgba(0,0,0,.42);padding:2.375rem 2.125rem;animation:app .6s ease both}}
+  .ic{{width:4.75rem;height:4.75rem;margin:0 auto 1rem;border-radius:1.25rem;display:flex;
     align-items:center;justify-content:center;color:#b7791f;
     background:linear-gradient(135deg,#fff4d6,#ffe6a8)}}
-  h1{{font-size:1.35rem;margin:0 0 6px}}
+  h1{{font-size:1.35rem;margin:0 0 0.375rem}}
   .ruban{{display:inline-block;font-size:.76rem;font-weight:700;color:#8a5a00;
-    background:#fff4d6;border:1px solid #f0d38a;border-radius:999px;padding:2px 11px;
-    margin-bottom:12px}}
-  p{{color:#41505f;margin:8px 0}}
+    background:#fff4d6;border:1px solid #f0d38a;border-radius:62.4375rem;padding:2px 0.6875rem;
+    margin-bottom:0.75rem}}
+  p{{color:#41505f;margin:0.5rem 0}}
   .district{{font-weight:700;color:#1c2430}}
-  .actions{{display:flex;gap:10px;margin-top:24px;justify-content:center;flex-wrap:wrap}}
-  .btn{{padding:12px 18px;border-radius:11px;font-weight:700;text-decoration:none;
+  .actions{{display:flex;gap:0.625rem;margin-top:1.5rem;justify-content:center;flex-wrap:wrap}}
+  .btn{{padding:0.75rem 1.125rem;border-radius:0.6875rem;font-weight:700;text-decoration:none;
     border:1.5px solid #dce3ea;color:#1c2430;background:#fff}}
   .btn:hover{{background:#f4f7fb}}
   .btn.p{{color:#fff;border:none;background:linear-gradient(135deg,#1b6ef3,#1558c9);
-    box-shadow:0 10px 22px rgba(27,110,243,.28)}}
-  @keyframes app{{from{{opacity:0;transform:translateY(16px)}}to{{opacity:1;transform:none}}}}
+    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.28)}}
+  @keyframes app{{from{{opacity:0;transform:translateY(1rem)}}to{{opacity:1;transform:none}}}}
 </style></head><body>
   <div class="fond"></div><div class="voile"></div>
   <div class="carte">
@@ -1360,54 +1370,56 @@ def page_equipe_technique(sel: dict, equipes, retour_href="/",
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Équipe technique</title>
 <style>
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
+
   *{box-sizing:border-box}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
-    background:#eef2f7;line-height:1.5;padding:78px 20px 48px}
-  .wrap{max-width:920px;margin:0 auto}
+    background:#eef2f7;line-height:1.5;padding:4.875rem 1.25rem 3rem}
+  .wrap{max-width:57.5rem;margin:0 auto}
   .entete{background:linear-gradient(135deg,#1b6ef3,#1558c9);color:#fff;
-    border-radius:18px;padding:24px 26px;box-shadow:0 14px 34px rgba(27,110,243,.28)}
+    border-radius:1.125rem;padding:1.5rem 1.625rem;box-shadow:0 0.875rem 2.125rem rgba(27,110,243,.28)}
   .entete .ruban{display:inline-block;font-size:.74rem;font-weight:700;
     background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);
-    border-radius:999px;padding:2px 11px;margin-bottom:8px}
-  .entete h1{margin:0 0 4px;font-size:1.5rem}
+    border-radius:62.4375rem;padding:2px 0.6875rem;margin-bottom:0.5rem}
+  .entete h1{margin:0 0 0.25rem;font-size:1.5rem}
   .entete .meta{opacity:.92;font-size:.92rem}
-  .entete .tot{margin-top:12px;font-size:.86rem;opacity:.92}
-  .role{background:#fff;border:1px solid #dce3ea;border-radius:16px;
-    padding:18px 20px;margin-top:18px;box-shadow:0 8px 22px rgba(13,43,78,.07)}
-  .role h2{display:flex;align-items:center;gap:10px;font-size:1.06rem;margin:0 0 14px;
+  .entete .tot{margin-top:0.75rem;font-size:.86rem;opacity:.92}
+  .role{background:#fff;border:1px solid #dce3ea;border-radius:1rem;
+    padding:1.125rem 1.25rem;margin-top:1.125rem;box-shadow:0 0.5rem 1.375rem rgba(13,43,78,.07)}
+  .role h2{display:flex;align-items:center;gap:0.625rem;font-size:1.06rem;margin:0 0 0.875rem;
     color:#12325c}
   .role h2 .cnt{font-size:.76rem;font-weight:700;color:#1558c9;background:#eaf1fd;
-    border:1px solid #c7dbf7;border-radius:999px;padding:1px 9px}
-  .axe{margin:0 0 14px;padding:0 0 0 16px;border-left:3px solid #c7dbf7}
+    border:1px solid #c7dbf7;border-radius:62.4375rem;padding:1px 0.5625rem}
+  .axe{margin:0 0 0.875rem;padding:0 0 0 1rem;border-left:0.1875rem solid #c7dbf7}
   .axe:last-child{margin-bottom:0}
-  .axe-t{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:.98rem;
-    font-weight:700;color:#12325c;margin:2px 0 10px}
+  .axe-t{display:flex;align-items:center;gap:0.5625rem;flex-wrap:wrap;font-size:.98rem;
+    font-weight:700;color:#12325c;margin:2px 0 0.625rem}
   .axe-t .axe-lbl{color:#1558c9;font-weight:800}
   .axe-t .cnt{font-size:.72rem;font-weight:700;color:#1558c9;background:#eaf1fd;
-    border:1px solid #c7dbf7;border-radius:999px;padding:1px 8px}
-  .pers-grille{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));
-    gap:12px}
-  .pers{display:flex;gap:12px;border:1px solid #e6ebf2;border-radius:12px;
-    padding:12px 13px;background:#fafbfd}
-  .ph{width:40px;height:40px;flex:none;border-radius:50%;color:#fff;font-weight:800;
+    border:1px solid #c7dbf7;border-radius:62.4375rem;padding:1px 0.5rem}
+  .pers-grille{display:grid;grid-template-columns:repeat(auto-fill,minmax(15.625rem,1fr));
+    gap:0.75rem}
+  .pers{display:flex;gap:0.75rem;border:1px solid #e6ebf2;border-radius:0.75rem;
+    padding:0.75rem 0.8125rem;background:#fafbfd}
+  .ph{width:2.5rem;height:2.5rem;flex:none;border-radius:50%;color:#fff;font-weight:800;
     font-size:.82rem;display:flex;align-items:center;justify-content:center;
     background:linear-gradient(135deg,#1b6ef3,#1558c9)}
   .pi{min-width:0}
   .pn{font-weight:700;font-size:.95rem}
   .pn .off{font-size:.7rem;font-weight:700;color:#9a3b32;background:#fdecea;
-    border:1px solid #f0cfca;border-radius:999px;padding:0 7px;margin-left:6px}
-  .pl{color:#7a8698;font-size:.78rem;margin-bottom:6px;font-family:ui-monospace,monospace}
-  .pd{list-style:none;margin:6px 0 0;padding:0;font-size:.82rem;color:#41505f}
-  .pd li{display:flex;gap:6px;margin:2px 0}
-  .pd li span{color:#8a97a7;flex:none;min-width:74px}
-  .vide{background:#fff;border:1px dashed #c7d2df;border-radius:16px;padding:28px;
-    text-align:center;color:#5a6675;margin-top:18px}
-  .actions{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
-  .btn{padding:11px 17px;border-radius:11px;font-weight:700;text-decoration:none;
+    border:1px solid #f0cfca;border-radius:62.4375rem;padding:0 0.4375rem;margin-left:0.375rem}
+  .pl{color:#7a8698;font-size:.78rem;margin-bottom:0.375rem;font-family:ui-monospace,monospace}
+  .pd{list-style:none;margin:0.375rem 0 0;padding:0;font-size:.82rem;color:#41505f}
+  .pd li{display:flex;gap:0.375rem;margin:2px 0}
+  .pd li span{color:#8a97a7;flex:none;min-width:4.625rem}
+  .vide{background:#fff;border:1px dashed #c7d2df;border-radius:1rem;padding:1.75rem;
+    text-align:center;color:#5a6675;margin-top:1.125rem}
+  .actions{display:flex;gap:0.625rem;margin-top:1.375rem;flex-wrap:wrap}
+  .btn{padding:0.6875rem 1.0625rem;border-radius:0.6875rem;font-weight:700;text-decoration:none;
     border:1.5px solid #dce3ea;color:#1c2430;background:#fff}
   .btn:hover{background:#f4f7fb}
   .btn.p{color:#fff;border:none;background:linear-gradient(135deg,#1b6ef3,#1558c9);
-    box-shadow:0 10px 22px rgba(27,110,243,.26)}
+    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.26)}
   @media print{body{background:#fff;padding:0}.actions{display:none}
     .entete{box-shadow:none}.role{box-shadow:none;break-inside:avoid}}
 </style></head><body><div class="wrap">
@@ -1520,28 +1532,30 @@ def page_motdepasse(erreur: str = "", succes: bool = False, sess=None) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RSU 2026 — Mon mot de passe</title>
 <style>
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
+
   *{box-sizing:border-box}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
     min-height:100vh;display:flex;align-items:flex-start;justify-content:center;
-    padding:88px 22px 40px;background:#eef2f7;line-height:1.5}
-  .mdp-carte{width:100%;max-width:440px;background:#fff;border:1px solid #dce3ea;
-    border-radius:16px;padding:30px 30px 34px;box-shadow:0 12px 34px rgba(13,43,78,.12)}
-  .mdp-carte h1{font-size:1.3rem;margin:0 0 4px}
-  .mdp-sous{color:#5a6675;margin:0 0 22px;font-size:.92rem}
-  label{display:block;font-weight:600;font-size:.86rem;margin:14px 0 6px}
-  input{width:100%;padding:12px 14px;font-size:1rem;color:#1c2430;background:#f7f9fc;
-    border:1.5px solid #e1e7ef;border-radius:11px;outline:none;transition:.18s}
-  input:focus{border-color:#1b6ef3;background:#fff;box-shadow:0 0 0 4px rgba(27,110,243,.14)}
-  .mdp-aide{color:#7a8698;font-size:.78rem;margin:6px 2px 0}
-  .mdp-btn{width:100%;margin-top:22px;padding:13px;font-size:1.02rem;font-weight:700;
-    color:#fff;border:none;border-radius:11px;cursor:pointer;
+    padding:5.5rem 1.375rem 2.5rem;background:#eef2f7;line-height:1.5}
+  .mdp-carte{width:100%;max-width:27.5rem;background:#fff;border:1px solid #dce3ea;
+    border-radius:1rem;padding:1.875rem 1.875rem 2.125rem;box-shadow:0 0.75rem 2.125rem rgba(13,43,78,.12)}
+  .mdp-carte h1{font-size:1.3rem;margin:0 0 0.25rem}
+  .mdp-sous{color:#5a6675;margin:0 0 1.375rem;font-size:.92rem}
+  label{display:block;font-weight:600;font-size:.86rem;margin:0.875rem 0 0.375rem}
+  input{width:100%;padding:0.75rem 0.875rem;font-size:1rem;color:#1c2430;background:#f7f9fc;
+    border:1.5px solid #e1e7ef;border-radius:0.6875rem;outline:none;transition:.18s}
+  input:focus{border-color:#1b6ef3;background:#fff;box-shadow:0 0 0 0.25rem rgba(27,110,243,.14)}
+  .mdp-aide{color:#7a8698;font-size:.78rem;margin:0.375rem 2px 0}
+  .mdp-btn{width:100%;margin-top:1.375rem;padding:0.8125rem;font-size:1.02rem;font-weight:700;
+    color:#fff;border:none;border-radius:0.6875rem;cursor:pointer;
     background:linear-gradient(135deg,#1b6ef3,#1558c9);
-    box-shadow:0 10px 22px rgba(27,110,243,.30);transition:.18s}
-  .mdp-btn:hover{transform:translateY(-2px);box-shadow:0 14px 28px rgba(27,110,243,.38)}
-  .mdp-retour{display:block;text-align:center;margin-top:16px;color:#1558c9;
+    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.30);transition:.18s}
+  .mdp-btn:hover{transform:translateY(-2px);box-shadow:0 0.875rem 1.75rem rgba(27,110,243,.38)}
+  .mdp-retour{display:block;text-align:center;margin-top:1rem;color:#1558c9;
     text-decoration:none;font-weight:600;font-size:.9rem}
   .mdp-retour:hover{text-decoration:underline}
-  .mdp-msg{padding:11px 13px;border-radius:11px;font-size:.9rem;margin-bottom:6px}
+  .mdp-msg{padding:0.6875rem 0.8125rem;border-radius:0.6875rem;font-size:.9rem;margin-bottom:0.375rem}
   .mdp-msg.err{background:#fdecea;border:1px solid #f0cfca;color:#c0392b}
   .mdp-msg.ok{background:#e8f7f0;border:1px solid #b8e6d2;color:#127a52}
 </style></head>
@@ -1640,60 +1654,61 @@ def _journal_zone(conn, u):
 
 
 _STYLE_JOURNAL = """
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
   *{box-sizing:border-box}
   body{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
-    min-height:100vh;background:#eef2f7;line-height:1.5;padding:84px 20px 48px}
-  .jr-wrap{max-width:820px;margin:0 auto}
-  .jr-carte{background:#fff;border:1px solid #dce3ea;border-radius:16px;
-    padding:26px 28px 30px;box-shadow:0 12px 34px rgba(13,43,78,.10);margin-bottom:22px}
-  .jr-carte h1{font-size:1.32rem;margin:0 0 4px}
-  .jr-sous{color:#5a6675;margin:0 0 18px;font-size:.92rem}
-  .jr-meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 18px;font-size:.88rem}
+    min-height:100vh;background:#eef2f7;line-height:1.5;padding:5.25rem 1.25rem 3rem}
+  .jr-wrap{max-width:51.25rem;margin:0 auto}
+  .jr-carte{background:#fff;border:1px solid #dce3ea;border-radius:1rem;
+    padding:1.625rem 1.75rem 1.875rem;box-shadow:0 0.75rem 2.125rem rgba(13,43,78,.10);margin-bottom:1.375rem}
+  .jr-carte h1{font-size:1.32rem;margin:0 0 0.25rem}
+  .jr-sous{color:#5a6675;margin:0 0 1.125rem;font-size:.92rem}
+  .jr-meta{display:flex;flex-wrap:wrap;gap:0.5rem 1.125rem;margin:0 0 1.125rem;font-size:.88rem}
   .jr-meta b{color:#5a6675;font-weight:600}
-  label{display:block;font-weight:600;font-size:.86rem;margin:14px 0 6px}
-  input[type=date],select{padding:11px 13px;font-size:1rem;color:#1c2430;background:#f7f9fc;
-    border:1.5px solid #e1e7ef;border-radius:11px;outline:none}
-  textarea{width:100%;min-height:150px;padding:13px 14px;font-size:1rem;color:#1c2430;
-    background:#f7f9fc;border:1.5px solid #e1e7ef;border-radius:11px;outline:none;
+  label{display:block;font-weight:600;font-size:.86rem;margin:0.875rem 0 0.375rem}
+  input[type=date],select{padding:0.6875rem 0.8125rem;font-size:1rem;color:#1c2430;background:#f7f9fc;
+    border:1.5px solid #e1e7ef;border-radius:0.6875rem;outline:none}
+  textarea{width:100%;min-height:9.375rem;padding:0.8125rem 0.875rem;font-size:1rem;color:#1c2430;
+    background:#f7f9fc;border:1.5px solid #e1e7ef;border-radius:0.6875rem;outline:none;
     resize:vertical;font-family:inherit;line-height:1.5}
   input:focus,textarea:focus,select:focus{border-color:#1b6ef3;background:#fff;
-    box-shadow:0 0 0 4px rgba(27,110,243,.14)}
-  .jr-btn{margin-top:18px;padding:12px 22px;font-size:1rem;font-weight:700;color:#fff;
-    border:none;border-radius:11px;cursor:pointer;
+    box-shadow:0 0 0 0.25rem rgba(27,110,243,.14)}
+  .jr-btn{margin-top:1.125rem;padding:0.75rem 1.375rem;font-size:1rem;font-weight:700;color:#fff;
+    border:none;border-radius:0.6875rem;cursor:pointer;
     background:linear-gradient(135deg,#1b6ef3,#1558c9);
-    box-shadow:0 10px 22px rgba(27,110,243,.28);transition:.18s}
-  .jr-btn:hover{transform:translateY(-2px);box-shadow:0 14px 28px rgba(27,110,243,.36)}
-  .jr-retour{display:inline-block;margin-top:6px;color:#1558c9;text-decoration:none;
+    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.28);transition:.18s}
+  .jr-btn:hover{transform:translateY(-2px);box-shadow:0 0.875rem 1.75rem rgba(27,110,243,.36)}
+  .jr-retour{display:inline-block;margin-top:0.375rem;color:#1558c9;text-decoration:none;
     font-weight:600;font-size:.9rem}
   .jr-retour:hover{text-decoration:underline}
-  .jr-msg{padding:11px 13px;border-radius:11px;font-size:.9rem;margin:0 0 16px}
+  .jr-msg{padding:0.6875rem 0.8125rem;border-radius:0.6875rem;font-size:.9rem;margin:0 0 1rem}
   .jr-msg.ok{background:#e8f7f0;border:1px solid #b8e6d2;color:#127a52}
   .jr-msg.err{background:#fdecea;border:1px solid #f0cfca;color:#c0392b}
-  .jr-h2{font-size:1.05rem;margin:0 0 12px}
+  .jr-h2{font-size:1.05rem;margin:0 0 0.75rem}
   .jr-vide{color:#7a8698;font-style:italic}
-  .jr-e{border:1px solid #e5ebf2;border-radius:12px;padding:13px 15px;margin-bottom:10px;
+  .jr-e{border:1px solid #e5ebf2;border-radius:0.75rem;padding:0.8125rem 0.9375rem;margin-bottom:0.625rem;
     background:#fbfcfe}
-  .jr-e-h{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;margin-bottom:6px}
+  .jr-e-h{display:flex;flex-wrap:wrap;gap:0.375rem 0.875rem;align-items:baseline;margin-bottom:0.375rem}
   .jr-date{font-weight:700;color:#1558c9}
   .jr-qui{font-weight:700}
-  .jr-tag{font-size:.78rem;color:#5a6675;background:#eef2f7;border-radius:999px;
-    padding:2px 10px}
+  .jr-tag{font-size:.78rem;color:#5a6675;background:#eef2f7;border-radius:62.4375rem;
+    padding:2px 0.625rem}
   .jr-txt{white-space:pre-wrap;margin:0;color:#26303c}
   .jr-mod{margin-left:auto;border:1px solid #c7dbf7;background:#eaf1fd;color:#1558c9;
-    font-weight:600;font-size:.78rem;border-radius:8px;padding:4px 10px;
+    font-weight:600;font-size:.78rem;border-radius:0.5rem;padding:0.25rem 0.625rem;
     text-decoration:none;transition:.15s;white-space:nowrap}
   .jr-mod:hover{background:#1558c9;color:#fff;border-color:#1558c9}
-  .jr-form-en-ligne{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
-  .jr-form-en-ligne label{margin:0 0 6px}
-  .jr-filtres{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
-    gap:12px 14px;align-items:end}
-  .jr-filtres label{margin:0 0 5px}
+  .jr-form-en-ligne{display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-end}
+  .jr-form-en-ligne label{margin:0 0 0.375rem}
+  .jr-filtres{display:grid;grid-template-columns:repeat(auto-fit,minmax(11.25rem,1fr));
+    gap:0.75rem 0.875rem;align-items:end}
+  .jr-filtres label{margin:0 0 0.3125rem}
   .jr-filtres select,.jr-filtres input[type=date],.jr-filtres input[type=text]{
-    width:100%;padding:10px 12px;font-size:.95rem;color:#1c2430;background:#f7f9fc;
-    border:1.5px solid #e1e7ef;border-radius:10px;outline:none}
+    width:100%;padding:0.625rem 0.75rem;font-size:.95rem;color:#1c2430;background:#f7f9fc;
+    border:1.5px solid #e1e7ef;border-radius:0.625rem;outline:none}
   .jr-filtres select:disabled{background:#eef1f5;color:#9aa6b3}
-  .jr-actions{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
-  .jr-btn.sm{margin-top:0;padding:10px 18px}
+  .jr-actions{display:flex;gap:0.625rem;align-items:center;margin-top:1rem;flex-wrap:wrap}
+  .jr-btn.sm{margin-top:0;padding:0.625rem 1.125rem}
 """
 
 
@@ -1848,16 +1863,16 @@ def page_journal_historique(u, entrees, date_filtre, total) -> str:
 
 
 _STYLE_SUIVI = """
-  .sv-leg{display:flex;gap:16px;flex-wrap:wrap;font-size:.85rem;margin:0 0 14px}
-  .sv-leg span{display:inline-flex;align-items:center;gap:6px}
-  .sv-pastille{width:16px;height:16px;border-radius:4px;display:inline-block}
-  .sv-wrap{overflow-x:auto;border:1px solid #e5ebf2;border-radius:12px}
+  .sv-leg{display:flex;gap:1rem;flex-wrap:wrap;font-size:.85rem;margin:0 0 0.875rem}
+  .sv-leg span{display:inline-flex;align-items:center;gap:0.375rem}
+  .sv-pastille{width:1rem;height:1rem;border-radius:0.25rem;display:inline-block}
+  .sv-wrap{overflow-x:auto;border:1px solid #e5ebf2;border-radius:0.75rem}
   table.sv{border-collapse:collapse;font-size:.8rem;min-width:100%}
-  table.sv th,table.sv td{border:1px solid #e9eef4;padding:5px 7px;text-align:center;
+  table.sv th,table.sv td{border:1px solid #e9eef4;padding:0.3125rem 0.4375rem;text-align:center;
     white-space:nowrap}
   table.sv th{background:#f4f7fb;color:#33415a;font-weight:700;position:sticky;top:0}
   table.sv th.nom,table.sv td.nom{text-align:left;position:sticky;left:0;z-index:2;
-    background:#fff;font-weight:600;min-width:190px;box-shadow:1px 0 0 #e5ebf2}
+    background:#fff;font-weight:600;min-width:11.875rem;box-shadow:1px 0 0 #e5ebf2}
   table.sv th.nom{background:#f4f7fb;z-index:3}
   table.sv td.ok{background:#e8f7f0;color:#127a52;font-weight:800}
   table.sv td.no{background:#fdecea;color:#c0392b}
@@ -2200,27 +2215,27 @@ def page_journal_lecture(u, entrees, filtres, options, portee_txt,
 # Réutilise la charte `_STYLE_JOURNAL` (classes jr-*) + quelques ajouts.
 # ---------------------------------------------------------------------------
 _STYLE_CONSIGNE_EXTRA = """
-  .cj-grp{border:1px solid #e5ebf2;border-radius:12px;padding:12px 14px;margin-top:8px;
+  .cj-grp{border:1px solid #e5ebf2;border-radius:0.75rem;padding:0.75rem 0.875rem;margin-top:0.5rem;
     background:#fbfcfe}
-  .cj-cbs{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:8px}
-  .cj-cb{display:flex;align-items:center;gap:7px;font-size:.9rem;font-weight:500;
+  .cj-cbs{display:flex;flex-wrap:wrap;gap:0.5rem 1rem;margin-top:0.5rem}
+  .cj-cb{display:flex;align-items:center;gap:0.4375rem;font-size:.9rem;font-weight:500;
     cursor:pointer}
-  .cj-cb input{width:16px;height:16px;accent-color:#1b6ef3}
+  .cj-cb input{width:1rem;height:1rem;accent-color:#1b6ef3}
   .cj-tous{font-weight:700;color:#1558c9}
-  select[multiple]{width:100%;padding:6px;border:1.5px solid #e1e7ef;border-radius:11px;
+  select[multiple]{width:100%;padding:0.375rem;border:1.5px solid #e1e7ef;border-radius:0.6875rem;
     background:#f7f9fc;font-size:.95rem}
   select[multiple]:disabled{background:#eef1f5;color:#9aa6b3}
-  .cj-cible{font-size:.8rem;color:#5a6675;background:#eef2f7;border-radius:999px;
-    padding:2px 10px;margin-right:6px}
-  .cj-nonlu{border-left:5px solid #e79a1b;background:#fffdf6}
+  .cj-cible{font-size:.8rem;color:#5a6675;background:#eef2f7;border-radius:62.4375rem;
+    padding:2px 0.625rem;margin-right:0.375rem}
+  .cj-nonlu{border-left:0.3125rem solid #e79a1b;background:#fffdf6}
   .cj-auteur{font-weight:700}
-  .cj-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .cj-actions{margin-left:auto;display:flex;gap:0.5rem;align-items:center}
   .cj-del-f{display:inline}
   .cj-del-b{border:1px solid #f0cfca;background:#fdecea;color:#c0392b;font-weight:600;
-    font-size:.78rem;border-radius:8px;padding:4px 10px;cursor:pointer;transition:.15s}
+    font-size:.78rem;border-radius:0.5rem;padding:0.25rem 0.625rem;cursor:pointer;transition:.15s}
   .cj-del-b:hover{background:#c0392b;color:#fff;border-color:#c0392b}
   .cj-mod-b{border:1px solid #c7dbf7;background:#eaf1fd;color:#1558c9;font-weight:600;
-    font-size:.78rem;border-radius:8px;padding:4px 10px;cursor:pointer;transition:.15s;
+    font-size:.78rem;border-radius:0.5rem;padding:0.25rem 0.625rem;cursor:pointer;transition:.15s;
     text-decoration:none}
   .cj-mod-b:hover{background:#1558c9;color:#fff;border-color:#1558c9}
 """
@@ -2502,6 +2517,63 @@ def _prefixer(html_str: str) -> str:
 # de selection/admin/transcription ET rapport), sans toucher chaque gabarit.
 # ---------------------------------------------------------------------------
 _RE_BODY = re.compile(r"(<body[^>]*>)", re.IGNORECASE)
+_RE_HEAD_FIN = re.compile(r"(</head>)", re.IGNORECASE)
+
+# ---------------------------------------------------------------------------
+# NORMALISATION D'AFFICHAGE (Phase 1 — pansement global, réversible).
+# Toute l'app est dessinée en pixels FIXES : sur un poste plus petit (ou en
+# « mise à l'échelle » Windows 125-150 %), la page paraît « trop grande » et
+# déborde. On ajuste ici l'ÉCHELLE de la page entière selon la largeur d'écran,
+# UNIQUEMENT VERS LE BAS : les écrans >= _UI_LARGEUR_REF ne sont pas touchés
+# (donc le poste de développement reste identique), les plus petits sont
+# réduits jusqu'à _UI_ZOOM_MIN pour « rentrer ». Injecté par _html() sur CHAQUE
+# page (rapport et login compris). Réglable par la variable d'environnement
+# RSU_UI_LARGEUR_REF. Sera retiré une fois la refonte rem (Phase 2) terminée.
+# ---------------------------------------------------------------------------
+_UI_LARGEUR_REF = int(os.environ.get("RSU_UI_LARGEUR_REF", "1200"))
+_UI_ZOOM_MIN = 0.78
+_STYLE_RESPONSIVE = (
+    '<style id="rsu-responsive">'
+    "html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}"
+    "img{max-width:100%;height:auto;}"
+    "</style>"
+    "<script>(function(){var B=" + str(_UI_LARGEUR_REF)
+    + ",MIN=" + str(_UI_ZOOM_MIN) + ";"
+    # Une page déjà FLUIDE (rem + base clamp, Phase 2) se déclare via la variable
+    # CSS --rsu-fluid:1 sur :root -> on NE la zoome PAS (sinon double échelle).
+    "function fluide(){try{return (getComputedStyle(document.documentElement)"
+    ".getPropertyValue('--rsu-fluid')||'').trim()==='1';}catch(e){return false;}}"
+    "function f(){var el=document.documentElement;"
+    "if(fluide()){try{el.style.zoom='';}catch(e){}return;}"
+    "var w=window.innerWidth||el.clientWidth||B;"
+    "var z=(w>=B)?1:Math.max(MIN,w/B);"
+    "try{el.style.zoom=z;}catch(e){}}"
+    # 'load' : re-vérifie une fois le CSS externe (rapport.css) appliqué.
+    "f();window.addEventListener('resize',f);window.addEventListener('load',f);"
+    # Bouton REPLIER/DÉPLIER la barre latérale des sections (dashboard uniquement :
+    # n'agit que si .sidebar + .topbar existent). Ajoute un ☰ dans la barre du haut ;
+    # bascule body.rsu-nav-col (CSS dans rapport.css). État mémorisé ; replié par
+    # défaut sur petit écran.
+    "function nav(){var sb=document.querySelector('.sidebar'),"
+    "tb=document.querySelector('.topbar');"
+    "if(!sb||!tb||document.getElementById('rsu-nav-toggle'))return;"
+    "var btn=document.createElement('button');btn.id='rsu-nav-toggle';"
+    "btn.type='button';btn.className='rsu-nav-toggle';btn.innerHTML='\\u2630';"
+    "btn.setAttribute('aria-label','Afficher ou masquer le menu des sections');"
+    "tb.insertBefore(btn,tb.firstChild);var K='rsu_nav_col';"
+    "function setc(c){document.body.classList.toggle('rsu-nav-col',c);"
+    "btn.setAttribute('aria-expanded',String(!c));"
+    "try{localStorage.setItem(K,c?'1':'0');}catch(e){}}"
+    "var v=null;try{v=localStorage.getItem(K);}catch(e){}"
+    "var init=(v===null)?(window.matchMedia&&window.matchMedia('(max-width:860px)').matches)"
+    ":(v==='1');setc(!!init);"
+    "btn.addEventListener('click',function(){"
+    "setc(!document.body.classList.contains('rsu-nav-col'));});}"
+    "if(document.readyState!=='loading')nav();"
+    "else document.addEventListener('DOMContentLoaded',nav);"
+    "})();"
+    "</script>"
+)
 
 
 def bandeau_utilisateur(sess) -> str:
@@ -2594,6 +2666,13 @@ def bandeau_utilisateur(sess) -> str:
         '</svg><span>Consignes</span></a>')
     return (
         '<div id="rsu-bandeau" role="banner">'
+        '<button type="button" class="rsu-b-toggle" aria-expanded="true" '
+        'aria-label="Afficher ou masquer le menu">'
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        'stroke-linejoin="round" aria-hidden="true">'
+        '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/>'
+        '<line x1="3" y1="18" x2="21" y2="18"/></svg></button>'
         f'<div class="rsu-b-ava">{esc(initiales)}</div>'
         '<div class="rsu-b-txt">'
         f'<span class="rsu-b-nom">{esc(nom)}</span>'
@@ -2665,13 +2744,30 @@ def bandeau_utilisateur(sess) -> str:
         'background:#fdecea;border-radius:999px;padding:7px 13px;transition:.15s}'
         '#rsu-bandeau .rsu-b-out:hover{background:#c0392b;color:#fff;'
         'border-color:#c0392b}'
+        '#rsu-bandeau .rsu-b-toggle{width:30px;height:30px;border-radius:50%;flex:none;'
+        'display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;'
+        'border:1px solid #c7dbf7;background:#eaf1fd;color:#1558c9;transition:.15s}'
+        '#rsu-bandeau .rsu-b-toggle:hover{background:#1558c9;color:#fff;border-color:#1558c9}'
+        # État REPLIÉ : ne reste que le bouton + les initiales ; tout le reste caché.
+        '#rsu-bandeau.rsu-col .rsu-b-txt,#rsu-bandeau.rsu-col a{display:none!important}'
         '@media print{#rsu-bandeau{display:none!important}}'
         '@media (max-width:560px){#rsu-bandeau .rsu-b-txt{display:none}'
         '#rsu-bandeau .rsu-b-out span,#rsu-bandeau .rsu-b-home span,'
         '#rsu-bandeau .rsu-b-key span,#rsu-bandeau .rsu-b-doc span,'
         '#rsu-bandeau .rsu-b-jr span,#rsu-bandeau .rsu-b-cs span,'
         '#rsu-bandeau .rsu-b-pf span{display:none}}'
-        '</style>')
+        '</style>'
+        # Bascule replier/déplier (état mémorisé ; replié par défaut sur petit écran).
+        '<script>(function(){var b=document.getElementById("rsu-bandeau");if(!b)return;'
+        'var t=b.querySelector(".rsu-b-toggle");if(!t)return;var K="rsu_bandeau_col";'
+        'function set(c){b.classList.toggle("rsu-col",c);'
+        't.setAttribute("aria-expanded",String(!c));'
+        'try{localStorage.setItem(K,c?"1":"0");}catch(e){}}'
+        'var v=null;try{v=localStorage.getItem(K);}catch(e){}'
+        'var init=(v===null)?(window.matchMedia&&window.matchMedia("(max-width:700px)").matches)'
+        ':(v==="1");set(!!init);'
+        't.addEventListener("click",function(){set(!b.classList.contains("rsu-col"));});})();'
+        '</script>')
 
 
 # ---------------------------------------------------------------------------
@@ -2846,6 +2942,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             bandeau += bulle_consignes(sess_courante)
         if bandeau:
             contenu = _RE_BODY.sub(lambda m: m.group(1) + bandeau, contenu, count=1)
+        # Normalisation d'affichage (Phase 1) : injectée juste avant </head> sur
+        # TOUTE page (connectée ou non), donc aussi login/erreurs — après les styles
+        # de la page (les gardes priment) et sans déplacer <meta charset>.
+        # Cf. _STYLE_RESPONSIVE.
+        contenu = _RE_HEAD_FIN.sub(
+            lambda m: _STYLE_RESPONSIVE + m.group(1), contenu, count=1)
         octets = contenu.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")

@@ -195,41 +195,42 @@ def export_utilisateurs_csv(conn) -> bytes:
 # Rendu HTML
 # ---------------------------------------------------------------------------
 _STYLE = """
+:root{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px);}
 *{box-sizing:border-box} body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;
   background:#f0f2f7;color:#1e293b}
-.bar{background:#0f172a;color:#fff;padding:12px 22px;display:flex;align-items:center;
-  gap:18px;flex-wrap:wrap}
-.bar b{font-size:15px} .bar a{color:#cbd5e1;text-decoration:none;font-size:13px}
+.bar{background:#0f172a;color:#fff;padding:0.75rem 1.375rem;display:flex;align-items:center;
+  gap:1.125rem;flex-wrap:wrap}
+.bar b{font-size:0.9375rem} .bar a{color:#cbd5e1;text-decoration:none;font-size:0.8125rem}
 .bar a:hover{color:#fff} .bar .sp{flex:1}
-.wrap{max-width:1080px;margin:22px auto;padding:0 16px}
-h2{font-size:16px;margin:26px 0 12px} h1{font-size:20px;margin:0 0 4px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-.card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px}
-.card .n{font-size:26px;font-weight:800} .card .l{font-size:11px;color:#64748b;
+.wrap{max-width:67.5rem;margin:1.375rem auto;padding:0 1rem}
+h2{font-size:1rem;margin:1.625rem 0 0.75rem} h1{font-size:1.25rem;margin:0 0 0.25rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.375rem,1fr));gap:0.75rem}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:0.75rem;padding:0.875rem 1rem}
+.card .n{font-size:1.625rem;font-weight:800} .card .l{font-size:0.6875rem;color:#64748b;
   text-transform:uppercase;letter-spacing:.5px}
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;
-  border-radius:12px;overflow:hidden;font-size:13px}
-th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #eef1f6}
-th{background:#f8fafc;font-size:11px;text-transform:uppercase;color:#64748b}
+  border-radius:0.75rem;overflow:hidden;font-size:0.8125rem}
+th,td{padding:0.5rem 0.625rem;text-align:left;border-bottom:1px solid #eef1f6}
+th{background:#f8fafc;font-size:0.6875rem;text-transform:uppercase;color:#64748b}
 tr:last-child td{border-bottom:none}
-.pill{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.pill{padding:2px 0.5rem;border-radius:1.25rem;font-size:0.6875rem;font-weight:600}
 .ok{background:#dcfce7;color:#166534}.ko{background:#fee2e2;color:#991b1b}
 .warn{background:#fef9c3;color:#854d0e}
 form.inline{display:inline}
-input,select{padding:7px 9px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;
+input,select{padding:0.4375rem 0.5625rem;border:1px solid #cbd5e1;border-radius:0.5rem;font-size:0.8125rem;
   font-family:inherit}
-button{padding:7px 12px;border:none;border-radius:8px;background:#2563eb;color:#fff;
-  font-size:12px;font-weight:600;cursor:pointer}
+button{padding:0.4375rem 0.75rem;border:none;border-radius:0.5rem;background:#2563eb;color:#fff;
+  font-size:0.75rem;font-weight:600;cursor:pointer}
 button.sec{background:#e2e8f0;color:#1e293b} button.danger{background:#ef4444}
-.grid-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
-  gap:10px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px}
-.note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;
-  font-size:13px;margin:10px 0}
-.msg{background:#dcfce7;border:1px solid #86efac;border-radius:10px;padding:10px 14px;
-  font-size:13px;margin:10px 0}
-.err{background:#fee2e2;border:1px solid #fecaca;border-radius:10px;padding:10px 14px;
-  font-size:13px;margin:10px 0}
-label{font-size:12px;color:#475569;display:block;margin-bottom:3px}
+.grid-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(12.5rem,1fr));
+  gap:0.625rem;background:#fff;border:1px solid #e2e8f0;border-radius:0.75rem;padding:1rem}
+.note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:0.625rem;padding:0.625rem 0.875rem;
+  font-size:0.8125rem;margin:0.625rem 0}
+.msg{background:#dcfce7;border:1px solid #86efac;border-radius:0.625rem;padding:0.625rem 0.875rem;
+  font-size:0.8125rem;margin:0.625rem 0}
+.err{background:#fee2e2;border:1px solid #fecaca;border-radius:0.625rem;padding:0.625rem 0.875rem;
+  font-size:0.8125rem;margin:0.625rem 0}
+label{font-size:0.75rem;color:#475569;display:block;margin-bottom:0.1875rem}
 small{color:#64748b}
 """
 

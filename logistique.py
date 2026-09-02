@@ -37,41 +37,41 @@ SECTIONS = (
 
 _CSS = """
 <style>
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;
-  margin-top:14px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:0.875rem;
+  margin-top:0.875rem}
 .ca{display:block;text-decoration:none;color:inherit;background:#fff;
-  border:1.5px solid #e2e8f0;border-radius:14px;padding:18px;transition:.15s}
-.ca:hover{border-color:#2563eb;box-shadow:0 12px 26px rgba(37,99,235,.14);
+  border:1.5px solid #e2e8f0;border-radius:0.875rem;padding:1.125rem;transition:.15s}
+.ca:hover{border-color:#2563eb;box-shadow:0 0.75rem 1.625rem rgba(37,99,235,.14);
   transform:translateY(-2px)}
-.ca .ic{font-size:26px;margin-bottom:8px}
-.ca .t{font-weight:700;font-size:15px;margin-bottom:4px}
-.ca .d{font-size:12.5px;color:#64748b;line-height:1.5}
-.etape{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;margin:12px 0;
+.ca .ic{font-size:1.625rem;margin-bottom:0.5rem}
+.ca .t{font-weight:700;font-size:0.9375rem;margin-bottom:0.25rem}
+.ca .d{font-size:0.78125rem;color:#64748b;line-height:1.5}
+.etape{background:#fff;border:1.5px solid #e2e8f0;border-radius:0.75rem;margin:0.75rem 0;
   overflow:hidden}
-.etape>summary{cursor:pointer;padding:13px 16px;font-weight:700;font-size:14px;
+.etape>summary{cursor:pointer;padding:0.8125rem 1rem;font-weight:700;font-size:0.875rem;
   background:#f8fafc;list-style:none}
 .etape>summary::-webkit-details-marker{display:none}
 .etape>summary:before{content:"▸ ";color:#2563eb}
 .etape[open]>summary:before{content:"▾ "}
-.etape ul{margin:6px 0 12px;padding:0 18px 0 16px;list-style:none}
-.etape li{padding:6px 0 6px 4px;font-size:13.5px;line-height:1.5;
-  border-top:1px solid #f1f5f9;display:flex;gap:9px;align-items:flex-start}
+.etape ul{margin:0.375rem 0 0.75rem;padding:0 1.125rem 0 1rem;list-style:none}
+.etape li{padding:0.375rem 0 0.375rem 0.25rem;font-size:0.84375rem;line-height:1.5;
+  border-top:1px solid #f1f5f9;display:flex;gap:0.5625rem;align-items:flex-start}
 .etape li:first-child{border-top:none}
-.etape li input{margin-top:3px;flex:none;width:16px;height:16px}
-.steps{counter-reset:s;margin-top:12px}
-.step{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:14px 16px 14px 54px;
-  position:relative;margin:10px 0}
-.step:before{counter-increment:s;content:counter(s);position:absolute;left:14px;top:14px;
-  width:28px;height:28px;border-radius:50%;background:#2563eb;color:#fff;font-weight:800;
-  display:flex;align-items:center;justify-content:center;font-size:14px}
-.step .t{font-weight:700;margin-bottom:4px}
-.step .d{font-size:13px;color:#475569;line-height:1.55}
-.ruban{display:inline-block;font-size:11px;font-weight:700;color:#8a5a00;
-  background:#fff4d6;border:1px solid #f0d38a;border-radius:999px;padding:3px 11px}
-.avenir{background:#fff8e6;border:1px dashed #f0d38a;border-radius:10px;padding:12px 14px;
-  font-size:13px;margin:12px 0}
-.tag{display:inline-block;font-size:11px;font-weight:700;color:#334155;background:#eef2f7;
-  border-radius:6px;padding:2px 8px;margin:2px 4px 2px 0}
+.etape li input{margin-top:0.1875rem;flex:none;width:1rem;height:1rem}
+.steps{counter-reset:s;margin-top:0.75rem}
+.step{background:#fff;border:1.5px solid #e2e8f0;border-radius:0.75rem;padding:0.875rem 1rem 0.875rem 3.375rem;
+  position:relative;margin:0.625rem 0}
+.step:before{counter-increment:s;content:counter(s);position:absolute;left:0.875rem;top:0.875rem;
+  width:1.75rem;height:1.75rem;border-radius:50%;background:#2563eb;color:#fff;font-weight:800;
+  display:flex;align-items:center;justify-content:center;font-size:0.875rem}
+.step .t{font-weight:700;margin-bottom:0.25rem}
+.step .d{font-size:0.8125rem;color:#475569;line-height:1.55}
+.ruban{display:inline-block;font-size:0.6875rem;font-weight:700;color:#8a5a00;
+  background:#fff4d6;border:1px solid #f0d38a;border-radius:62.4375rem;padding:0.1875rem 0.6875rem}
+.avenir{background:#fff8e6;border:1px dashed #f0d38a;border-radius:0.625rem;padding:0.75rem 0.875rem;
+  font-size:0.8125rem;margin:0.75rem 0}
+.tag{display:inline-block;font-size:0.6875rem;font-weight:700;color:#334155;background:#eef2f7;
+  border-radius:0.375rem;padding:2px 0.5rem;margin:2px 0.25rem 2px 0}
 </style>"""
 
 
