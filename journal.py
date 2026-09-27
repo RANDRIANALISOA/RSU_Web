@@ -104,6 +104,16 @@ def creer_tables(conn) -> None:
         '"id" TEXT PRIMARY KEY, "login" TEXT, "nom_prenom" TEXT, '
         '"fonction" TEXT, "zone" TEXT, "code_district" TEXT, '
         '"date_jour" TEXT, "journal" TEXT, "cree_le" TEXT, "modifie_le" TEXT)')
+    # PIÈCES JOINTES du journal de bord : 1 ligne par fichier téléversé, rattaché à
+    # une entrée (`activite_id`). `categorie` = « image » ou « fichier » (détermine le
+    # dossier racine : Rapport_Images / Rapport_Fichier) ; `code_district` = code du
+    # district de rangement (sous-dossier) ; `chemin` = chemin RELATIF (à config.BASE)
+    # du fichier sur le serveur ; `nom_fichier` = nom d'origine (affiché/téléchargé).
+    cur.execute(
+        'CREATE TABLE IF NOT EXISTS "journal_fichier" ('
+        '"id" TEXT PRIMARY KEY, "activite_id" TEXT, "login" TEXT, '
+        '"code_district" TEXT, "categorie" TEXT, "nom_fichier" TEXT, '
+        '"chemin" TEXT, "taille" BIGINT, "cree_le" TEXT)')
     _migrer_transcription(conn)
     _migrer_activite(conn)
     conn.commit()
@@ -229,7 +239,8 @@ def consigner(conn, login, nom_prenom, district, evenement, statut,
               inchanges=None) -> None:
     """Consigne UN événement d'ingestion (qui, quand, district, issue).
 
-    `evenement` : « Téléversement » ou « Transcription ».
+    `evenement` : « Téléversement » / « Transcription », suffixé « VAD » pour la
+                  visite à domicile (c'est ce suffixe qui sépare les 2 journaux).
     `statut`    : « Réussi » ou « Échec ».
     `detail`    : message lisible (fichiers reçus, ou motif du refus).
     Les compteurs ajoutes/modifies/inchanges ne sont donnés que pour une
@@ -245,12 +256,47 @@ def consigner(conn, login, nom_prenom, district, evenement, statut,
     conn.commit()
 
 
-def transcriptions(conn, limite=100, login=None):
-    """Historique des transcriptions (plus récente d'abord).
+# Phases de la collecte. L'événement écrit en base porte le suffixe « VAD »
+# (« Téléversement VAD ») pour la visite à domicile, rien pour le dénombrement :
+# c'est ce qui sépare les deux journaux d'ingestion.
+PHASE_DEN = "DEN"
+PHASE_VAD = "VAD"
+
+
+def phase_evenement(evenement) -> str:
+    """« Téléversement VAD » -> "VAD" ; « Téléversement » -> "DEN"."""
+    return PHASE_VAD if "VAD" in (evenement or "") else PHASE_DEN
+
+
+def reussi(statut) -> bool:
+    """Un statut est un SUCCÈS sauf s'il dit « Échec ».
+
+    Tolérant à la casse et aux accents : les lignes anciennes portent « Réussi »,
+    les lignes VAD ont longtemps porté « Succès », et une ligne d'avant les
+    colonnes evenement/statut n'a rien du tout. Seul « Échec » est un échec —
+    sinon la pastille sortait en ROUGE sur une opération pourtant réussie."""
+    s = (statut or "").strip().lower()
+    return s not in ("échec", "echec")
+
+
+def noms_districts(conn) -> dict:
+    """{code_district (str) : nom} — une seule requête, pour nommer le journal."""
+    try:
+        import zones
+        return {str(d["code"]): d["nom"] for d in zones.tous_districts(conn)}
+    except Exception:
+        return {}
+
+
+def transcriptions(conn, limite=100, login=None, phase=None):
+    """Historique des ingestions (plus récente d'abord).
 
     `login` : si fourni, ne renvoie que les événements de cet utilisateur (page
-    Expert). Les anciennes lignes (avant les colonnes evenement/statut) sont
-    interprétées comme une « Transcription » « Réussi »."""
+    Expert). `phase` : "DEN" ou "VAD" pour ne garder qu'une des deux phases —
+    les deux journaux sont montrés séparément, un téléversement de dénombrement
+    et un téléversement de VAD n'ayant ni les mêmes fichiers ni les mêmes tables.
+    Les anciennes lignes (avant les colonnes evenement/statut) sont interprétées
+    comme une « Transcription » « Réussi »."""
     ph = db_source._placeholder(conn)
     where = f' WHERE "login" = {ph}' if login else ''
     params = (login,) if login else ()
@@ -259,15 +305,31 @@ def transcriptions(conn, limite=100, login=None):
                 '"statut","detail","fichiers","ajoutes","modifies","inchanges" '
                 'FROM "journal_transcription"' + where +
                 ' ORDER BY "quand" DESC', params)
+    noms = noms_districts(conn)
     out = []
-    for r in cur.fetchall()[:limite]:
+    for r in cur.fetchall():
+        evenement = r[4] or "Transcription"           # anciennes lignes
+        ph_ev = phase_evenement(evenement)
+        if phase and ph_ev != phase:
+            continue
+        code = str(r[2] or "")
+        nom = noms.get(code)
+        ok = reussi(r[5])
         out.append({
-            "login": r[0], "nom_prenom": r[1], "district": r[2], "quand": r[3],
+            "login": r[0], "nom_prenom": r[1], "district": code, "quand": r[3],
             "quand_court": fmt_quand(r[3]),
-            "evenement": r[4] or "Transcription",     # anciennes lignes
-            "statut": r[5] or "Réussi",
+            "district_txt": f"{nom} ({code})" if nom else (code or "—"),
+            "evenement": evenement,
+            # Nom d'opération SANS le suffixe de phase : la phase est déjà dans
+            # le titre du tableau, la répéter sur chaque ligne n'apprend rien.
+            "evenement_court": evenement.replace(" VAD", "").strip(),
+            "phase": ph_ev,
+            "reussi": ok,
+            "statut": "Réussi" if ok else "Échec",    # libellé unique à l'écran
             "detail": r[6] or r[7] or "",             # detail, sinon fichiers
             "fichiers": r[7], "ajoutes": r[8], "modifies": r[9], "inchanges": r[10]})
+        if len(out) >= limite:
+            break
     return out
 
 
@@ -276,16 +338,85 @@ def transcriptions(conn, limite=100, login=None):
 # lecture par les coordonnateurs / l'Admin.
 # ---------------------------------------------------------------------------
 def ecrire_activite(conn, login, nom_prenom, fonction, zone, code_district,
-                    date_jour, texte) -> None:
-    """Consigne UNE entrée de journal de bord (plusieurs entrées/jour permises)."""
+                    date_jour, texte) -> str:
+    """Consigne UNE entrée de journal de bord (plusieurs entrées/jour permises).
+    Renvoie l'`id` de l'entrée créée (pour y rattacher d'éventuelles pièces jointes)."""
     ph = db_source._placeholder(conn)
+    aid = secrets.token_hex(16)
     conn.cursor().execute(
         'INSERT INTO "journal_activite" ("id","login","nom_prenom","fonction",'
         '"zone","code_district","date_jour","journal","cree_le") '
         f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
-        (secrets.token_hex(16), login, nom_prenom, fonction, zone,
+        (aid, login, nom_prenom, fonction, zone,
          str(code_district or ""), date_jour, texte, _maintenant()))
     conn.commit()
+    return aid
+
+
+# ---------------------------------------------------------------------------
+# Pièces jointes (images / fichiers) rattachées aux entrées de journal
+# ---------------------------------------------------------------------------
+def ajouter_fichier(conn, activite_id, login, code_district, categorie,
+                    nom_fichier, chemin, taille=0) -> str:
+    """Enregistre une pièce jointe déjà écrite sur le disque et renvoie son `id`.
+    `categorie` = « image » ou « fichier » ; `chemin` = chemin relatif de stockage."""
+    ph = db_source._placeholder(conn)
+    fid = secrets.token_hex(16)
+    conn.cursor().execute(
+        'INSERT INTO "journal_fichier" ("id","activite_id","login","code_district",'
+        '"categorie","nom_fichier","chemin","taille","cree_le") '
+        f"VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})",
+        (fid, activite_id, login, str(code_district or ""), categorie,
+         nom_fichier, chemin, int(taille or 0), _maintenant()))
+    conn.commit()
+    return fid
+
+
+def _dict_fichier(r) -> dict:
+    return {"id": r[0], "activite_id": r[1], "login": r[2],
+            "code_district": r[3], "categorie": r[4], "nom_fichier": r[5],
+            "chemin": r[6], "taille": r[7]}
+
+
+_SELECT_FICHIER = ('SELECT "id","activite_id","login","code_district","categorie",'
+                   '"nom_fichier","chemin","taille" FROM "journal_fichier"')
+
+
+def obtenir_fichier(conn, fid):
+    """Une pièce jointe par id (dict), ou None. Sert au service/téléchargement du
+    fichier (avec contrôle d'accès côté serveur) et à la suppression."""
+    ph = db_source._placeholder(conn)
+    cur = conn.cursor()
+    cur.execute(_SELECT_FICHIER + f' WHERE "id"={ph}', (fid,))
+    r = cur.fetchone()
+    return _dict_fichier(r) if r else None
+
+
+def fichiers_par_activite(conn, ids):
+    """{activite_id: [pièces jointes]} pour un lot d'entrées (une seule requête).
+    Les entrées sans pièce jointe sont absentes du dict."""
+    keep = {str(i) for i in (ids or []) if i}
+    if not keep:
+        return {}
+    cur = conn.cursor()
+    cur.execute(_SELECT_FICHIER + ' ORDER BY "cree_le"')
+    out = {}
+    for r in cur.fetchall():
+        if str(r[1]) in keep:
+            out.setdefault(str(r[1]), []).append(_dict_fichier(r))
+    return out
+
+
+def supprimer_fichier(conn, fid, login):
+    """Supprime une pièce jointe SEULEMENT si elle appartient à `login`. Renvoie le
+    dict du fichier supprimé (pour effacer le fichier disque), sinon None."""
+    f = obtenir_fichier(conn, fid)
+    if not f or f["login"] != login:
+        return None
+    ph = db_source._placeholder(conn)
+    conn.cursor().execute(f'DELETE FROM "journal_fichier" WHERE "id"={ph}', (fid,))
+    conn.commit()
+    return f
 
 
 def a_ecrit_le(conn, login, date_jour) -> bool:
@@ -385,7 +516,7 @@ def activites(conn, districts=None, date_jour=None, login=None,
     where = (' WHERE ' + ' AND '.join(clauses)) if clauses else ''
     cur = conn.cursor()
     cur.execute('SELECT "login","nom_prenom","fonction","zone","code_district",'
-                '"date_jour","journal","cree_le" FROM "journal_activite"'
+                '"date_jour","journal","cree_le","id" FROM "journal_activite"'
                 + where + ' ORDER BY "date_jour" DESC, "cree_le" DESC', tuple(params))
     dset = {str(d) for d in districts} if districts is not None else None
     dcode = str(district) if district not in (None, "") else None
@@ -399,7 +530,8 @@ def activites(conn, districts=None, date_jour=None, login=None,
         out.append({"login": r[0], "nom_prenom": r[1], "fonction": r[2],
                     "zone": r[3], "code_district": r[4],
                     "date_jour": r[5], "date_court": fmt_jour(r[5]),
-                    "journal": r[6], "cree_le": r[7], "cree_court": fmt_quand(r[7])})
+                    "journal": r[6], "cree_le": r[7], "cree_court": fmt_quand(r[7]),
+                    "id": r[8]})
         if len(out) >= limite:
             break
     return out

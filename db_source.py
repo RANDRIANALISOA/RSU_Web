@@ -53,7 +53,52 @@ FK_ZONES = {
         "fokontany": ("fokontany", "code_fokontany"),
         "num_fkt":   ("fokontany", "code_fokontany"),
     },
+    # VAD (visite à domicile) : la géographie OBSERVÉE est portée par CQ6..CQ9a
+    # (codes numériques + value labels). Les colonnes `region`/`district`/
+    # `commune`/`fokontany` de ce questionnaire sont, elles, des valeurs
+    # PRÉCHARGÉES au format texte, souvent « ##N/A## » -> pas de clé étrangère.
+    "vad_menage": {
+        "CQ6":  ("region",    "code_region"),
+        "CQ7":  ("district",  "code_district"),
+        "CQ8":  ("commune",   "code_commune"),
+        "CQ9":  ("fokontany", "code_fokontany"),
+        "CQ9a": ("fokontany", "code_fokontany"),
+    },
 }
+
+# CODE FOKONTANY À 8 CHIFFRES : quelle colonne le porte ?
+# Ancien questionnaire -> `num_fkt` (et `fokontany` portait le LIBELLÉ).
+# Questionnaire de septembre 2026 -> `num_fkt` a DISPARU, `fokontany` porte le code
+# (avec un jeu de value labels pour le libellé). Même règle que
+# `rapport_core._charger_segments` : on lit `num_fkt` s'il existe, `fokontany` sinon.
+#
+# ⚠️ Pourquoi ça n'a PAS d'excuse de se tromper ici : en SQLite, une colonne absente
+# dans `WHERE "num_fkt" = 63050604` n'est pas une erreur — l'identifiant entre
+# guillemets doubles est relu comme la CHAÎNE 'num_fkt', la condition est donc
+# toujours fausse et la requête renvoie 0 ligne SANS rien signaler. Idem pour un
+# `SELECT "num_fkt"`, qui renvoie la chaîne 'num_fkt' sur chaque ligne.
+COL_FKT_ANCIEN = "num_fkt"
+COL_FKT_ACTUEL = "fokontany"
+
+
+def colonne_code_fokontany(varnames) -> str:
+    """Nom de la colonne portant le code fokontany, d'après la liste des colonnes
+    (`DbDataset.varnames`, ou la sortie de `colonnes_table`)."""
+    return COL_FKT_ANCIEN if COL_FKT_ANCIEN in varnames else COL_FKT_ACTUEL
+
+
+def colonnes_table(conn, table: str) -> list:
+    """Colonnes d'une table de données, lues dans `_schema` (source de vérité de la
+    structure transcrite). Liste vide si la table est absente (base neuve)."""
+    ph = _placeholder(conn)
+    cur = conn.cursor()
+    try:
+        cur.execute(f'SELECT "varname" FROM "_schema" WHERE "source_table"={ph} '
+                    f'ORDER BY "ordinal"', (table,))
+    except Exception:
+        return []
+    return [r[0] for r in cur.fetchall()]
+
 
 # Clé étrangère AGENT : le code agent (« responsible » = enquêteur ayant réalisé
 # l'interview) de `interview__diagnostics` référence `agent(login_ae)`. Le lien
@@ -66,6 +111,7 @@ FK_ZONES = {
 # interview__diagnostics, sinon l'insert violerait la contrainte.
 FK_AGENT = {
     "interview__diagnostics": {"responsible": ("agent", "login_ae")},
+    "vad_diagnostics": {"responsible": ("agent", "login_ae")},
 }
 
 
@@ -151,6 +197,28 @@ def districts_du_den(dossier: str) -> set:
     if "district" not in d.varnames:
         return set()
     return {int(v) for v in d.col("district") if v is not None}
+
+
+def cles_hors_district(dossier: str, code: int) -> set:
+    """interview__key des segments d'un dossier qui ne sont PAS du district `code`.
+
+    Un export Survey Solutions peut contenir quelques interviews saisies hors de
+    la zone d'affectation (essai d'un agent, district choisi par erreur). Plutot
+    que de refuser TOUT le televersement pour une ligne, l'appelant ecarte ces
+    cles (sur les 3 tables, qui se rattachent au segment par interview__key) et
+    avertit l'utilisateur. Les lignes sans district (None) sont CONSERVEES : on
+    n'exclut que ce qui est explicitement rattache a un autre district.
+    """
+    fname = FICHIERS["den"][0]
+    chemin = os.path.join(dossier, fname)
+    if not os.path.isfile(chemin):
+        return set()
+    d = lire_dta(chemin)
+    if "district" not in d.varnames or "interview__key" not in d.varnames:
+        return set()
+    cles = d.col("interview__key")
+    return {cles[i] for i, v in enumerate(d.col("district"))
+            if v is not None and int(v) != int(code)}
 
 
 def _assurer_cibles_fk(conn, table: str) -> None:
@@ -464,9 +532,11 @@ def source_db(conn, fkt=None, district=None, commune=None, communes=None):
     """Renvoie une fonction kind -> DbDataset, avec validation des colonnes.
 
     Filtrage optionnel (au plus un des quatre) :
-    - `fkt` (code num_fkt) : seules les lignes de CE fokontany. DEN filtré sur
-      num_fkt, ROSTER/DIAGNOSTICS via les interview__key de ce fokontany. Rend une
-      page « un fokontany » légère (≈ quelques centaines de ménages).
+    - `fkt` (code fokontany à 8 chiffres) : seules les lignes de CE fokontany. DEN
+      filtré sur la colonne qui porte ce code — `num_fkt` (ancien questionnaire) ou
+      `fokontany` (questionnaire de septembre 2026), cf. `colonne_code_fokontany` —,
+      ROSTER/DIAGNOSTICS via les interview__key de ce fokontany. Rend une page
+      « un fokontany » légère (≈ quelques centaines de ménages).
     - `commune` (code_commune, 6 chiffres) : toutes les lignes de CETTE commune.
       DEN filtré sur la colonne `commune`, ROSTER/DIAGNOSTICS via ses
       interview__key. Sert la vue « périmètre commune » du dashboard multi-pages.
@@ -482,6 +552,9 @@ def source_db(conn, fkt=None, district=None, commune=None, communes=None):
     """
     ph = _placeholder(conn)
     codes_communes = tuple(int(c) for c in communes) if communes else ()
+    # Colonne portant le code fokontany, résolue UNE fois (structure de la base).
+    col_fkt = (colonne_code_fokontany(colonnes_table(conn, FICHIERS["den"][1]))
+               if fkt is not None else None)
 
     def resolveur(kind: str) -> DbDataset:
         fname, table = FICHIERS[kind]
@@ -522,13 +595,13 @@ def source_db(conn, fkt=None, district=None, commune=None, communes=None):
         elif fkt is None:
             ds = DbDataset(conn, table)
         elif kind == "den":
-            ds = DbDataset(conn, table, f'"num_fkt" = {ph}', (int(fkt),))
+            ds = DbDataset(conn, table, f'"{col_fkt}" = {ph}', (int(fkt),))
         else:  # roster / diagnostics : rattachés au fokontany via interview__key
             ds = DbDataset(
                 conn, table,
                 f'"interview__key" IN '
                 f'(SELECT "interview__key" FROM "den_menage" '
-                f'WHERE "num_fkt" = {ph})',
+                f'WHERE "{col_fkt}" = {ph})',
                 (int(fkt),))
         manquantes = [c for c in _REQUIS.get(fname, []) if c not in ds.varnames]
         if manquantes:
@@ -537,3 +610,39 @@ def source_db(conn, fkt=None, district=None, commune=None, communes=None):
                 f"{', '.join(manquantes)}.")
         return ds
     return resolveur
+
+
+# ---------------------------------------------------------------------------
+# Codes agent presents au serveur pour un perimetre
+# ---------------------------------------------------------------------------
+def agents_du_perimetre(conn, district=None, communes=None) -> set:
+    """Codes agent (`interview__diagnostics.responsible`) dont des donnees sont
+    ARRIVEES AU SERVEUR pour ce perimetre : un district, ou une liste de communes
+    (les communes affectees d'un Superviseur Technique).
+
+    Sert a borner les DECLARATIONS des agents (table `declaration_agent`, sans
+    colonne geographique) au perimetre affiche, cf.
+    `declarations.par_agent_date_perimetre`. Renvoie un ensemble vide si les
+    tables du denombrement ne sont pas encore transcrites.
+    """
+    ph = _placeholder(conn)
+    sql = ('SELECT DISTINCT "responsible" FROM "interview__diagnostics" '
+           'WHERE "interview__key" IN '
+           '(SELECT "interview__key" FROM "den_menage" WHERE ')
+    if communes:
+        codes = tuple(int(c) for c in communes)
+        sql += f'"commune" IN ({",".join([ph] * len(codes))}))'
+        params = codes
+    elif district is not None:
+        sql += f'"district" = {ph})'
+        params = (int(district),)
+    else:
+        sql = 'SELECT DISTINCT "responsible" FROM "interview__diagnostics"'
+        params = ()
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, params)
+    except Exception:
+        return set()          # base pas encore peuplee (tables absentes)
+    return {str(r[0]).strip() for r in cur.fetchall()
+            if r[0] is not None and str(r[0]).strip()}

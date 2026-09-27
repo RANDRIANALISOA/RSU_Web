@@ -98,7 +98,9 @@ def main() -> int:
         g = py["general"]
         print("RESULTAT : TOUT IDENTIQUE")
         print(f"  (controle : total={g['total']} presents={g['nbPresents']} "
-              f"carnet={g['nbCarnet']} segments={g['nbSegments']} agents={g['nAgents']})")
+              f"taille_moy={g['tailleMoy']} ecart_type={g['tailleEt']} "
+              f"cv={g['tailleCv']}% "
+              f"segments={g['nbSegments']} agents={g['nAgents']})")
         return 0
     print("RESULTAT : DIVERGENCE")
     return 1

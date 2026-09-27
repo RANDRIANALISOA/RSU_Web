@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-consignes.py — Consignes / instructions données par les Coordonnateurs.
+consignes.py — Consignes / instructions données par les Coordonnateurs et l'Admin.
 
-Un Coordonnateur (National ou régional) rédige une CONSIGNE et choisit :
+Un émetteur (Coordonnateur National ou régional, ou Admin) rédige une CONSIGNE
+et choisit :
   - les RÔLES destinataires (« Tout le monde » ou une sélection de rôles) ;
   - les DISTRICTS concernés (« Tous » ou une sélection).
 Chaque destinataire (dont le rôle ET le district correspondent) la reçoit :
@@ -204,7 +205,7 @@ def modifier(conn, consigne_id, auteur_login, roles_cibles, districts_cibles,
 
 def supprimer(conn, consigne_id, auteur_login) -> bool:
     """Supprime une consigne ET ses lectures — SEULEMENT si `auteur_login` en est
-    l'auteur (un coordonnateur ne peut retirer que SES propres consignes). Renvoie
+    l'auteur (un émetteur ne peut retirer que SES propres consignes). Renvoie
     True si une consigne a bien été supprimée, False sinon (inconnue / pas l'auteur)."""
     ph = db_source._placeholder(conn)
     cur = conn.cursor()

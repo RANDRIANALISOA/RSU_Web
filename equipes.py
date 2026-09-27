@@ -377,6 +377,12 @@ def page_choix_traitement(district_txt) -> str:
          '<div class="d">Téléverser les fichiers Excel des Chefs d’Équipe et des '
          'Agents, puis transcrire vers la base de données.</div>'
          '<div class="go">Ouvrir →</div></a>',
+         '<a class="ca" href="/vad/general">'
+         '<div class="ic">📈</div><div class="t">Tableau de bord — Visite à '
+         'domicile</div>'
+         '<div class="d">Suivre la VAD de votre district : avancement, '
+         'démographie, habitation, biens, eau et assainissement, erreurs.</div>'
+         '<div class="go">Ouvrir →</div></a>',
          '<a class="ca" href="/traitement/prechargement">'
          '<div class="ic">📦</div><div class="t">Générer la base de préchargement '
          '(VAD)</div>'

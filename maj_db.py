@@ -29,6 +29,7 @@ import sys
 import config
 import db_source
 from lire_dta import lire_dta
+from rapport_core import _REQUIS
 
 class ErreurMaj(Exception):
     """Erreur métier de mise à jour (fichier/structure). Utilisable côté web : le
@@ -42,6 +43,15 @@ CLES = {
     "den_menage": ("interview__key",),
     "segment_roster": ("interview__key", "segment_roster__id"),
 }
+
+# Colonnes EXIGÉES par table, déduites de `rapport_core._REQUIS` (qui les liste
+# par nom de fichier) via `db_source.FICHIERS`. Garde-fou depuis que la structure
+# est RÉCONCILIÉE au lieu d'être exigée à l'identique (cf. `maj_table`) : un .dta
+# peut apporter des colonnes en plus ou en moins, mais s'il n'a pas celles-là,
+# ce n'est pas un export de dénombrement et on refuse. Les tables VAD n'y
+# figurent pas : `vad_db.trouver_fichiers` fait déjà ce contrôle de son côté.
+REQUISES = {tb: tuple(_REQUIS.get(fn, ()))
+            for _k, (fn, tb) in db_source.FICHIERS.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -66,18 +76,86 @@ def _colonnes_connues(conn, table):
     return [r[0] for r in cur.fetchall()]
 
 
-def _ecrire_meta(conn, d, table):
-    """(Re)écrit le schéma et les value labels de CETTE table (les autres intactes)."""
+def _colonnes_sql(conn, table):
+    """Colonnes RÉELLES de la table SQL (`_rid` compris), ou [] si elle n'existe pas.
+
+    `_schema` dit ce que la base est censée porter ; ceci dit ce qu'elle porte
+    VRAIMENT. Les deux peuvent diverger après un aperçu (dry-run) : le rollback
+    annule les écritures de `_schema`, mais le CREATE / ALTER TABLE, lui, est
+    déjà passé en autocommit côté sqlite3. D'où les gardes « si la colonne n'y
+    est pas déjà » plus bas : un aperçu suivi de son application ne doit pas
+    échouer sur une colonne en double.
+
+    ⚠️ On interroge le CATALOGUE, jamais la table : un `SELECT` sur une table
+    absente lève, et sous PostgreSQL une requête en erreur AVORTE la transaction
+    en cours (tout ce qui suit échouerait). `PRAGMA table_info` et
+    `information_schema.columns` renvoient, eux, une liste vide sans rien lever."""
+    cur = conn.cursor()
+    if db_source._est_sqlite(conn):
+        cur.execute(f'PRAGMA table_info("{table}")')
+        return [r[1] for r in cur.fetchall()]
+    cur.execute('SELECT "column_name" FROM "information_schema"."columns" '
+                'WHERE "table_name"=%s ORDER BY "ordinal_position"', (table,))
+    return [r[0] for r in cur.fetchall()]
+
+
+def _setnames_connus(conn, table):
+    """{colonne: set_name} tels qu'enregistrés dans `_schema` pour cette table."""
     ph = db_source._placeholder(conn)
     cur = conn.cursor()
+    cur.execute(f'SELECT "varname","set_name" FROM "_schema" '
+                f'WHERE "source_table"={ph}', (table,))
+    return {r[0]: (r[1] or "") for r in cur.fetchall()}
+
+
+def _ajouter_colonnes(conn, d, table, noms):
+    """ALTER TABLE ADD COLUMN pour les colonnes que le .dta apporte EN PLUS.
+
+    Les lignes déjà en base gardent NULL sur ces colonnes : on n'invente pas une
+    valeur pour une question qui n'était pas posée à l'époque. Renvoie la liste
+    des colonnes réellement ajoutées."""
+    fk = db_source._fk_de(table)
+    physiques = set(_colonnes_sql(conn, table))
+    cur = conn.cursor()
+    ajoutees = []
+    for nom in noms:
+        if nom in physiques:            # déjà ajoutée (aperçu précédent, cf. _colonnes_sql)
+            continue
+        col = f'"{nom}" {db_source._sql_type(d.col(nom))}'
+        if nom in fk:                   # même clé étrangère déclarative qu'à la création
+            ztable, pk = fk[nom]
+            col += f' REFERENCES "{ztable}" ("{pk}")'
+        cur.execute(f'ALTER TABLE "{table}" ADD COLUMN {col}')
+        ajoutees.append(nom)
+    return ajoutees
+
+
+def _ecrire_meta(conn, d, table, ordre=None):
+    """(Re)écrit le schéma et les value labels de CETTE table (les autres intactes).
+
+    `ordre` : liste COMPLÈTE des colonnes de la table quand elle en porte plus que
+    le .dta courant (questionnaire qui a évolué — colonnes ajoutées, colonnes
+    disparues qu'on conserve). Par défaut, les colonnes du .dta. Les colonnes
+    absentes du fichier gardent le `set_name` déjà enregistré, et seuls les jeux
+    de value labels PORTÉS par le .dta sont remplacés : ceux des colonnes absentes
+    restent en place, sinon le rapport perdrait leurs libellés."""
+    ph = db_source._placeholder(conn)
+    cur = conn.cursor()
+    setnames = {nom: (d.val_label_names[i] if i < len(d.val_label_names) else "") or ""
+                for i, nom in enumerate(d.varnames)}
+    if ordre is None:
+        ordre, anciens = list(d.varnames), {}
+    else:
+        anciens = _setnames_connus(conn, table)
     cur.execute(f'DELETE FROM "_schema" WHERE "source_table"={ph}', (table,))
-    cur.execute(f'DELETE FROM "_value_labels" WHERE "source_table"={ph}', (table,))
-    for i, nom in enumerate(d.varnames):
-        setname = d.val_label_names[i] if i < len(d.val_label_names) else ""
+    for i, nom in enumerate(ordre):
+        setname = setnames.get(nom, anciens.get(nom, ""))
         cur.execute('INSERT INTO "_schema" '
                     '("source_table","ordinal","varname","set_name") '
-                    f'VALUES ({ph},{ph},{ph},{ph})', (table, i, nom, setname or ""))
+                    f'VALUES ({ph},{ph},{ph},{ph})', (table, i, nom, setname))
     for setname in {s for s in d.val_label_names if s}:
+        cur.execute(f'DELETE FROM "_value_labels" WHERE "source_table"={ph} '
+                    f'AND "set_name"={ph}', (table, setname))
         for code, label in d.value_labels.get(setname, {}).items():
             cur.execute('INSERT INTO "_value_labels" '
                         '("source_table","set_name","code","label") '
@@ -106,8 +184,13 @@ def _creer_table(conn, d, table):
 # ---------------------------------------------------------------------------
 # Upsert d'une table depuis son .dta
 # ---------------------------------------------------------------------------
-def maj_table(conn, dta_path, table, cles, log=print):
-    """Renvoie (ajoutes, modifies, inchanges)."""
+def maj_table(conn, dta_path, table, cles, log=print, exclure_cles=None):
+    """Renvoie (ajoutes, modifies, inchanges).
+
+    `exclure_cles` : interview__key a NE PAS transcrire (lignes hors du district
+    de l'Expert, cf. db_source.cles_hors_district). Les 3 tables se rattachent au
+    segment par interview__key, donc le meme jeu de cles les filtre toutes.
+    """
     d = lire_dta(dta_path)
     ph = db_source._placeholder(conn)
     cur = conn.cursor()
@@ -115,6 +198,12 @@ def maj_table(conn, dta_path, table, cles, log=print):
     for c in cles:
         if c not in cols:
             raise ErreurMaj(f"[{table}] colonne clé « {c} » absente du .dta.")
+    manquantes = [c for c in REQUISES.get(table, ()) if c not in cols]
+    if manquantes:
+        raise ErreurMaj(
+            f"[{table}] {os.path.basename(dta_path)} n'a pas les colonnes "
+            f"indispensables au rapport : {', '.join(manquantes)}. "
+            f"Ce fichier n'est pas un export de dénombrement RSU.")
     colonnes = [d.col(n) for n in cols]              # une liste par colonne
     idx_cle = [cols.index(c) for c in cles]
     n = d.nobs
@@ -122,26 +211,58 @@ def maj_table(conn, dta_path, table, cles, log=print):
     def ligne(i):
         return tuple(colonnes[j][i] for j in range(len(cols)))
 
+    # Lignes a transcrire (toutes, sauf celles ecartees par interview__key).
+    if exclure_cles and "interview__key" in cols:
+        ik = colonnes[cols.index("interview__key")]
+        retenues = [i for i in range(n) if ik[i] not in exclure_cles]
+    else:
+        retenues = list(range(n))
+
     connues = _colonnes_connues(conn, table)
+    physiques = _colonnes_sql(conn, table)
+    if physiques and not connues:
+        # La table existe mais `_schema` est vide : un aperçu (dry-run) l'a créée
+        # puis le rollback a effacé son schéma. On repart de ses colonnes réelles
+        # plutôt que de la recréer (ce qui échouerait).
+        connues = [c for c in physiques if c != "_rid"]
 
     # --- Table absente : création + chargement complet (première fois) ---
-    if not connues:
+    if not physiques:
         _creer_table(conn, d, table)
         _ecrire_meta(conn, d, table)
         marks = ",".join([ph] * (len(cols) + 1))
         sql = (f'INSERT INTO "{table}" ("_rid",'
                + ",".join(f'"{c}"' for c in cols) + f') VALUES ({marks})')
-        cur.executemany(sql, [(i,) + ligne(i) for i in range(n)])
+        cur.executemany(sql, [(r,) + ligne(i) for r, i in enumerate(retenues)])
         _index_unique(conn, table, cles)
-        log(f'   table "{table}" créée : {n} lignes ajoutées.')
-        return (n, 0, 0)
+        log(f'   table "{table}" créée : {len(retenues)} lignes ajoutées.')
+        return (len(retenues), 0, 0)
 
-    # --- Table existante : la structure des colonnes doit correspondre ---
-    if connues != cols:
-        raise ErreurMaj(
-            f"[{table}] structure différente : les colonnes du .dta ne correspondent "
-            f"pas à celles de la base. Un changement de questionnaire nécessite un "
-            f"rechargement complet (db_source.charger_dta_vers_db), pas un update.")
+    # --- Table existante : STRUCTURE RÉCONCILIÉE ---------------------------
+    # Le questionnaire du dénombrement évolue d'une version à l'autre (celui de
+    # septembre 2026 ajoute `nbr_max_men` à DEN_MENAGE). Exiger des colonnes
+    # identiques à celles de la base faisait refuser tout le dossier pour une
+    # colonne d'écart, et imposait un rechargement complet. On accepte donc un
+    # export dont la structure diffère, dès lors qu'il porte bien les colonnes
+    # clés et celles dont le rapport a besoin (vérifiées plus haut) :
+    #   • colonne du .dta absente de la base -> ajoutée (ALTER TABLE) ; les
+    #     lignes déjà transcrites y restent NULL ;
+    #   • colonne de la base absente du .dta -> CONSERVÉE : les lignes anciennes
+    #     gardent leur valeur, les nouvelles la laissent NULL ;
+    #   • ordre des colonnes différent -> sans effet, tout se fait par NOM.
+    # L'ordre enregistré dans `_schema` reste celui de la base, les nouvelles
+    # colonnes venant à la suite : ce qui était déjà lu ne se décale pas.
+    nouvelles = [c for c in cols if c not in connues]
+    if nouvelles:
+        _ajouter_colonnes(conn, d, table, nouvelles)
+        log(f'   table "{table}" : {len(nouvelles)} colonne(s) ajoutée(s) par ce '
+            f'questionnaire ({", ".join(nouvelles)}).')
+    absentes = [c for c in connues if c not in cols]
+    if absentes:
+        log(f'   table "{table}" : {len(absentes)} colonne(s) de la base absente(s) '
+            f'de ce .dta, conservée(s) ({", ".join(absentes[:5])}'
+            f'{"…" if len(absentes) > 5 else ""}).')
+    ordre = connues + nouvelles
 
     # Lignes existantes : clé -> tuple(valeurs dans l'ordre `cols`).
     sel = ",".join(f'"{c}"' for c in cols)
@@ -155,7 +276,7 @@ def maj_table(conn, dta_path, table, cles, log=print):
     mx = -1 if mx is None else mx
 
     ajouts, modifs, inchange = [], [], 0
-    for i in range(n):
+    for i in retenues:
         vals = ligne(i)
         cle = tuple(vals[k] for k in idx_cle)
         anc = existant.get(cle)
@@ -177,18 +298,23 @@ def maj_table(conn, dta_path, table, cles, log=print):
         sql = f'UPDATE "{table}" SET {set_clause} WHERE {where}'
         cur.executemany(sql, [v + tuple(v[k] for k in idx_cle) for v in modifs])
 
-    _ecrire_meta(conn, d, table)          # rafraîchit les value labels (peuvent s'étendre)
+    _ecrire_meta(conn, d, table, ordre)   # rafraîchit les value labels (peuvent s'étendre)
     _index_unique(conn, table, cles)
     log(f'   table "{table}" : +{len(ajouts)} ajoutées, ~{len(modifs)} modifiées, '
         f'={inchange} inchangées (total .dta : {n}).')
     return (len(ajouts), len(modifs), inchange)
 
 
-def maj_depuis_dossier(data_dir, conn, log=print, dry_run=False):
+def maj_depuis_dossier(data_dir, conn, log=print, dry_run=False,
+                       exclure_cles=None):
     """Transcrit (upsert) tous les .dta d'un dossier. Renvoie un résultat structuré :
         {"tables": [{table, present, ajoutes, modifies, inchanges}, ...],
          "total": {"ajoutes","modifies","inchanges"}, "traites": n, "dry_run": bool}
-    Lève ErreurMaj (fichier/structure). Web-safe (pas de SystemExit)."""
+    Lève ErreurMaj (fichier/structure). Web-safe (pas de SystemExit).
+
+    `exclure_cles` : interview__key a ecarter sur les 3 tables (segments hors du
+    district de l'Expert, cf. db_source.cles_hors_district).
+    """
     _assurer_meta(conn)
     tables, total, traites = [], [0, 0, 0], 0
     for table, cles in CLES.items():
@@ -199,7 +325,8 @@ def maj_depuis_dossier(data_dir, conn, log=print, dry_run=False):
             tables.append({"table": table, "present": False,
                            "ajoutes": 0, "modifies": 0, "inchanges": 0})
             continue
-        a, m, u = maj_table(conn, chemin, table, cles, log)
+        a, m, u = maj_table(conn, chemin, table, cles, log,
+                            exclure_cles=exclure_cles)
         total = [total[0] + a, total[1] + m, total[2] + u]
         traites += 1
         tables.append({"table": table, "present": True,

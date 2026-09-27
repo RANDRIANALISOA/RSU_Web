@@ -155,6 +155,19 @@ def _date_j(date_str) -> str:
     return j if (len(j) == 8 and j.isdigit()) else ""
 
 
+def _col_opt(d, nom, defaut=None) -> list:
+    """Colonne OPTIONNELLE : renvoie la colonne si elle existe, sinon une colonne
+    entierement a `defaut`.
+
+    Le questionnaire DENOMBREMENT RSU a change en septembre 2026 : `carnet`,
+    `copie_carnet`, `indication`, `copie_presence`, `ID_efkt` et la `date` du
+    roster ont disparu, `num_fkt` a ete fusionne dans `fokontany`. Lire par ici
+    permet de servir les DEUX structures (anciennes bases archivees comprises)
+    sans casser le rapport : la donnee absente vaut None et s'affiche « n/d ».
+    """
+    return d.col(nom) if nom in d.varnames else [defaut] * d.nobs
+
+
 # ---------------------------------------------------------------------------
 # Erreurs "métier" (messages clairs pour l'utilisateur, sans traceback)
 # ---------------------------------------------------------------------------
@@ -176,14 +189,19 @@ _REQUIS = {
         "interview__key", "responsible", "interview__status",
         "rejections__sup", "interview__duration",
     ],
+    # `num_fkt` n'est plus exige : le questionnaire de septembre 2026 porte le
+    # code fokontany a 8 chiffres directement dans `fokontany` (cf. _col_opt).
     "DEN_MENAGE.dta": [
         "interview__key", "region", "district", "commune", "fokontany",
-        "num_fkt", "segment", "assignment__id",
+        "segment", "assignment__id",
     ],
+    # `carnet`, `indication` et `date` ne sont plus collectes par le nouveau
+    # questionnaire : ils deviennent optionnels (la date est desormais portee par
+    # DEN_MENAGE, au niveau du segment).
     "segment_roster.dta": [
-        "interview__key", "nom_cmD", "code_den", "num_bat", "carnet",
-        "presence", "indication", "taille_menD",
-        "gps_coord__Latitude", "gps_coord__Longitude", "adresse", "date",
+        "interview__key", "nom_cmD", "code_den", "num_bat",
+        "presence", "taille_menD",
+        "gps_coord__Latitude", "gps_coord__Longitude", "adresse",
     ],
 }
 
@@ -251,9 +269,14 @@ def _charger_segments(d, diag: dict):
     district = d.col_decoded("district")
     commune = d.col_decoded("commune")
     fokontany = d.col_decoded("fokontany")
-    numfkt = d.col("num_fkt")
+    # Code fokontany a 8 chiffres : colonne `num_fkt` dans l'ancien questionnaire,
+    # portee par `fokontany` lui-meme dans le nouveau (meme code des deux cotes).
+    numfkt = d.col("num_fkt") if "num_fkt" in d.varnames else d.col("fokontany")
     segment = d.col("segment")
     assign = d.col("assignment__id")
+    # `date` du segment : nouveau questionnaire uniquement (elle etait auparavant
+    # portee par chaque ligne de segment_roster).
+    date_seg = _col_opt(d, "date")
 
     seg_by_key: dict = {}
     seg_liste: list = []
@@ -269,6 +292,7 @@ def _charger_segments(d, diag: dict):
             "fktcode": code,
             "segment": _txt(segment[i]),
             "assignment__id": assign[i],
+            "date": date_seg[i],
             "agent": dd.get("agent", ""),
             "statut_seg": dd.get("statut_seg"),
             "rejet": dd.get("rejet", 0),
@@ -288,14 +312,18 @@ def _construire_menages(d, seg_by_key: dict) -> list:
     surnom = d.col("surnom")
     code_den = d.col("code_den")
     num_bat = d.col("num_bat")
-    carnet = d.col("carnet")
+    # Le CARNET e-Fokontany a disparu du questionnaire de septembre 2026 ET du
+    # tableau de bord : il n'est plus lu ni transporte. `indication`
+    # (electrification), elle, reste lue et s'affiche « n/d » tant qu'elle manque.
     presence = d.col("presence")
-    indication = d.col("indication")
+    indication = _col_opt(d, "indication")
     taille = d.col("taille_menD")
     lat = d.col("gps_coord__Latitude")
     lon = d.col("gps_coord__Longitude")
     adresse = d.col("adresse")
-    date = d.col("date")
+    # Date : portee par le roster dans l'ancien questionnaire, par le segment
+    # (DEN_MENAGE) dans le nouveau -> on retombe sur celle du segment si absente.
+    date = _col_opt(d, "date")
 
     menages: list = []
     for i in range(d.nobs):
@@ -317,8 +345,7 @@ def _construire_menages(d, seg_by_key: dict) -> list:
             "fktcode": s.get("fktcode", ""),
             "seg": s.get("segment", ""),
             "bat": num_bat[i],
-            "date": _date_j(date[i]),
-            "carnet": carnet[i],
+            "date": _date_j(date[i] if date[i] is not None else s.get("date")),
             "presence": presence[i],
             "elec": indication[i],
             "taille": taille[i],
@@ -357,6 +384,47 @@ def _js_round(x: float) -> int:
     return int(math.floor(x + 0.5))
 
 
+def _r2(x: float) -> float:
+    """Arrondi a 2 decimales A L'IDENTIQUE du JS (`Math.round(x*100)/100`) :
+    le gabarit et le serveur doivent produire le MEME nombre (test_agrege.py)."""
+    return _js_round(x * 100) / 100
+
+
+def _r1(x: float) -> float:
+    """Arrondi a 1 decimale a l'identique du JS (`Math.round(x*10)/10`)."""
+    return _js_round(x * 10) / 10
+
+
+def _taille_stats(menages) -> dict:
+    """Taille des menages : effectif, personnes, MOYENNE, ECART-TYPE et
+    COEFFICIENT DE VARIATION.
+
+    Seules les tailles > 0 comptent (une taille nulle ou absente n'est pas un
+    menage d'une personne : c'est une taille non renseignee — meme regle que
+    l'histogramme « Taille des menages » de la page Qualite). L'ecart-type est
+    celui de la POPULATION (le denombrement est exhaustif sur le perimetre).
+
+    Coefficient de variation (CV) = ecart-type / moyenne, EN POURCENTAGE : une
+    dispersion RELATIVE, comparable d'une zone a l'autre meme quand les tailles
+    moyennes different (un ecart-type de 1,4 ne se lit pas pareil sur une moyenne
+    de 2,3 ou de 5,0). Calcule sur la moyenne et l'ecart-type NON ARRONDIS, puis
+    arrondi a 1 decimale.
+
+    Meme ordre d'operations que le gabarit -> memes doubles des deux cotes."""
+    tailles = [m["taille"] for m in menages if (m.get("taille") or 0) > 0]
+    n = len(tailles)
+    if not n:
+        return {"nTaille": 0, "nbPersonnes": 0, "tailleMoy": 0, "tailleEt": 0,
+                "tailleCv": 0}
+    somme = sum(tailles)
+    moy = somme / n
+    var = sum((t - moy) * (t - moy) for t in tailles) / n
+    et = math.sqrt(var)
+    cv = _r1(100 * et / moy) if moy else 0
+    return {"nTaille": n, "nbPersonnes": somme,
+            "tailleMoy": _r2(moy), "tailleEt": _r2(et), "tailleCv": cv}
+
+
 def _avg(vals) -> int:
     vals = list(vals)
     return _js_round(sum(vals) / len(vals)) if vals else 0
@@ -370,8 +438,15 @@ def _valid_date(d) -> bool:
     return isinstance(d, str) and bool(re.fullmatch(r"\d{8}", d))
 
 
-def _has_carnet(m) -> bool:
-    return m["carnet"] == 1 or m["carnet"] == 2
+def _dispo(menages, champ: str) -> bool:
+    """Le champ a-t-il ete REELLEMENT collecte ? (au moins une valeur non nulle)
+
+    Distingue « aucun menage dans ce cas » (un vrai 0) de « la question n'existe
+    plus dans le questionnaire » (rien a afficher). Sans ce test, `elec`,
+    supprime du questionnaire en septembre 2026, produirait des comptages a 0
+    que le lecteur prendrait pour des resultats reels.
+    """
+    return any(m.get(champ) is not None for m in menages)
 
 
 def _commune_of(m) -> str:
@@ -398,14 +473,12 @@ def _segments_agg(menages: list) -> list:
                  "commune": _commune_of(m), "fkt": m.get("fkt", ""), "fktcode": fc,
                  "seg": m.get("seg", ""), "statut": m.get("statut"),
                  "rejet": m.get("rejet", 0), "tps": m.get("tps"),
-                 "n": 0, "nPresent": 0, "nCarnet": 0, "_bats": set()}
+                 "n": 0, "nPresent": 0, "_bats": set()}
             seg_map[key] = s
             ordre.append(key)
         s["n"] += 1
         if m.get("presence") == 1:
             s["nPresent"] += 1
-        if _has_carnet(m):
-            s["nCarnet"] += 1
         if m.get("bat"):
             s["_bats"].add(m.get("bat"))
     segs = []
@@ -430,7 +503,6 @@ def agrege(menages: list, segments: list = None) -> dict:
 
     # -- General --
     nb_presents = sum(1 for m in menages if m.get("presence") == 1)
-    nb_carnet = sum(1 for m in menages if _has_carnet(m))
     tps_seg = [s["tps"] for s in segments if (s["tps"] or 0) > 0]
     nb_bat = len({(m.get("sid"), m.get("bat")) for m in menages})
     agents_actifs = sorted({m["agent"] for m in menages if m.get("agent")})
@@ -446,7 +518,6 @@ def agrege(menages: list, segments: list = None) -> dict:
     general = {
         "total": total,
         "nbPresents": nb_presents,
-        "nbCarnet": nb_carnet,
         "nbSegments": len(segments),
         "nbBat": nb_bat,
         "tps": _avg(tps_seg),
@@ -455,7 +526,9 @@ def agrege(menages: list, segments: list = None) -> dict:
         "daily": daily,
         "agentsPerDay": agents_per_day,
         "presence": [nb_presents, sum(1 for m in menages if m.get("presence") == 2)],
-        "carnet": [sum(1 for m in menages if m.get("carnet") == c) for c in (1, 2, 3, 4)],
+        # Taille des menages : remplace, au tableau de bord, les indicateurs du
+        # carnet e-Fokontany (question retiree du questionnaire).
+        **_taille_stats(menages),
     }
 
     # -- Taux de capture GPS (hasGps = lat ET lon des nombres finis) --
@@ -477,10 +550,10 @@ def agrege(menages: list, segments: list = None) -> dict:
     nb_gps_lat = sum(1 for m in menages
                      if m.get("lat") and abs(m["lat"]) < 90)   # qualite : lat seule
     qualite = {
-        "carnet": general["carnet"],
         "presence": general["presence"],
         "elec": [sum(1 for m in menages if m.get("elec") == 1),
                  sum(1 for m in menages if m.get("elec") == 2)],
+        "elecDispo": _dispo(menages, "elec"),
         "statut": [sum(1 for s in segments if s["statut"] == 120),
                    sum(1 for s in segments if s["statut"] != 120)],
         "gps": [nb_gps_lat, total - nb_gps_lat],
@@ -517,9 +590,7 @@ def agrege(menages: list, segments: list = None) -> dict:
         agents.append({
             "agent": a, "n": len(am), "nSeg": len(asg),
             "nPresent": sum(1 for m in am if m.get("presence") == 1),
-            "nCarnet": sum(1 for m in am if _has_carnet(m)),
             "presPct": _pct(sum(1 for m in am if m.get("presence") == 1), len(am)),
-            "carnPct": _pct(sum(1 for m in am if _has_carnet(m)), len(am)),
             "tps": _avg([s["tps"] for s in asg if (s["tps"] or 0) > 0]),
         })
 
@@ -604,6 +675,105 @@ def couverture(menages: list, attendus: dict, niveau: str = "district") -> dict:
         "menagesRestants": restant,
         "joursRestants": (0 if fiable else _jr(restant, rythme)),
         "communes": communes,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 5ter. ECART entre ce que l'agent DECLARE et ce qui ARRIVE AU SERVEUR
+# ---------------------------------------------------------------------------
+def ecart_declaration(menages: list, declare: dict, chefs: dict = None) -> dict:
+    """Confronte, PAR AGENT, le nombre de menages DECLARE et celui RECU au serveur.
+
+    - `menages` : les menages du perimetre (cle "agent" = cle d'agent, "date" au
+      format AAAAMMJJ) ; ce qui est ARRIVE AU SERVEUR.
+    - `declare` : {(cle_agent, date AAAAMMJJ): nombre declare} — ce que l'agent
+      DIT avoir denombre ce jour-la (table `declaration_agent`, saisie par le
+      Superviseur Technique). La cle d'agent doit suivre la MEME convention que
+      les menages (code brut cote export, NOM de l'agent cote tableau de bord).
+    - `chefs` (facultatif) : {cle_agent: nom du chef d'equipe}.
+
+    ECART = DECLARE - RECU : positif = il est arrive MOINS que declare
+    (synchronisation en retard, ou sur-declaration) ; negatif = il est arrive
+    PLUS que declare. `declare`/`ecart`/`pct` valent None pour un agent qui n'a
+    RIEN declare : c'est une absence de declaration, pas un zero.
+
+    Les menages sans date valide sont ignores (ils ne sont comparables a aucune
+    declaration) — meme regle que la feuille Excel « Ecart declaration-serveur ».
+
+    Renvoie {"agents": [...], "total": {...}}, les agents tries par ecart
+    DECROISSANT (le plus gros manquant d'abord), les non-declarants a la fin."""
+    declare = declare or {}
+    chefs = chefs or {}
+
+    recu = {}
+    for m in menages:
+        d = m.get("date")
+        if not _valid_date(d):
+            continue
+        cle = (m.get("agent") or "").strip()
+        recu[(cle, d)] = recu.get((cle, d), 0) + 1
+
+    # cle_agent -> date -> [declare|None, recu]
+    par_agent: dict = {}
+    for (cle, d), n in declare.items():
+        par_agent.setdefault(cle, {}).setdefault(d, [None, 0])[0] = int(n or 0)
+    for (cle, d), n in recu.items():
+        par_agent.setdefault(cle, {}).setdefault(d, [None, 0])[1] = int(n or 0)
+
+    def _pct_ecart(dec, ec):
+        return round(100.0 * ec / dec, 1) if dec else None
+
+    agents = []
+    for cle, dates in par_agent.items():
+        detail = []
+        t_dec = t_rec = 0
+        j_dec = 0
+        a_declare = False
+        for d in sorted(dates):
+            dec, rec = dates[d]
+            t_rec += rec
+            if dec is None:
+                detail.append({"d": d, "dec": None, "rec": rec, "ecart": None})
+                continue
+            a_declare = True
+            j_dec += 1
+            t_dec += dec
+            detail.append({"d": d, "dec": dec, "rec": rec, "ecart": dec - rec})
+        ecart = (t_dec - t_rec) if a_declare else None
+        agents.append({
+            "agent": cle or "(agent inconnu)",
+            "chef": chefs.get(cle, ""),
+            "declare": t_dec if a_declare else None,
+            "recu": t_rec,
+            "ecart": ecart,
+            "pct": (_pct_ecart(t_dec, ecart) if a_declare else None),
+            "joursDeclares": j_dec,
+            "joursRecus": sum(1 for d in dates if dates[d][1] > 0),
+            # Detail par date : inutile (que des « — ») sans declaration, et il
+            # pese lourd dans la page quand personne n'a encore declare.
+            "detail": detail if a_declare else [],
+        })
+
+    # Plus gros ecart d'abord ; les agents SANS declaration ferment la marche.
+    agents.sort(key=lambda a: (0 if a["ecart"] is not None else 1,
+                               -(a["ecart"] or 0), a["agent"]))
+
+    declarants = [a for a in agents if a["declare"] is not None]
+    t_dec = sum(a["declare"] for a in declarants)
+    t_rec = sum(a["recu"] for a in agents)
+    return {
+        "agents": agents,
+        "total": {
+            "declare": t_dec,
+            "recu": t_rec,
+            "ecart": t_dec - t_rec,
+            "pct": _pct_ecart(t_dec, t_dec - t_rec),
+            "agents": len(agents),
+            "declarants": len(declarants),
+            # Agents dont des donnees sont arrivees mais qui n'ont rien declare.
+            "sansDeclaration": sum(1 for a in agents
+                                   if a["declare"] is None and a["recu"] > 0),
+        },
     }
 
 
@@ -1076,7 +1246,8 @@ def generer_rapport(chemins: dict, log=None, source=None,
                     assets_url=None, section=None, scope=None,
                     nav_tree=None, alleger=False, nav_base="/vue",
                     agents_noms=None, menages_attendus=None,
-                    contours_override=None) -> str:
+                    contours_override=None, declarations=None,
+                    chefs_agents=None) -> str:
     """Genere le rapport HTML. Renvoie le chemin du fichier produit.
 
     `source` (optionnel) : resolveur kind -> dataset, ou kind est
@@ -1100,6 +1271,15 @@ def generer_rapport(chemins: dict, log=None, source=None,
     communes/fokontany dans sa hierarchie pour afficher TOUTES les unites du
     district (meme sans donnees), afin de reperer les zones oubliees. Sans elle,
     le gabarit se comporte comme avant (rapport exe : ZONES_REF non defini).
+
+    `declarations` (optionnel) : {(cle_agent, date AAAAMMJJ): nombre declare par
+    l'agent}. Fourni (web), le rapport ecrit `const ECART_DECL` = l'ecart PAR
+    AGENT entre ce qui est DECLARE et ce qui est ARRIVE AU SERVEUR (cf.
+    `ecart_declaration`), affiche sur la page « Par agent ». La cle d'agent suit
+    la convention des menages (NOM si `agents_noms` le renseigne, sinon code).
+    `chefs_agents` (optionnel) : {cle_agent: nom du chef d'equipe}, pour la
+    colonne « Chef d'equipe » de ce tableau. Absents (exe) : rien n'est ecrit et
+    le gabarit n'affiche pas le tableau.
 
     `contours_override` (optionnel) : dict {"fkt", "commune", "district"} de
     contours {code(str): anneaux} qui REMPLACENT ceux du mode choisi pour les
@@ -1218,6 +1398,10 @@ def generer_rapport(chemins: dict, log=None, source=None,
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(head)
         f.write("const META = " + json.dumps(meta, ensure_ascii=False) + ";\n")
+        # Question retiree du questionnaire (septembre 2026) : la section
+        # electrification reste en place mais s'affiche « n/d » au lieu d'un 0.
+        f.write("const ELEC_DISPO = "
+                + json.dumps(_dispo(menages, "elec")) + ";\n")
         if zones_ref is not None:
             f.write("const ZONES_REF = "
                     + json.dumps(zones_ref, ensure_ascii=False) + ";\n")
@@ -1265,6 +1449,13 @@ def generer_rapport(chemins: dict, log=None, source=None,
                              (scope or {}).get("level", "district"))
             f.write("const COUVERTURE = "
                     + json.dumps(cov, ensure_ascii=False) + ";\n")
+        # Ecart declaration <-> serveur, par agent (web, page « Par agent »).
+        # Garde par `typeof ECART_DECL` cote gabarit -> l'exe reste inchange.
+        if declarations is not None:
+            f.write("const ECART_DECL = "
+                    + json.dumps(ecart_declaration(menages, declarations,
+                                                   chefs_agents),
+                                 ensure_ascii=False) + ";\n")
         f.write(tail)
 
     log(f"Rapport genere : {out_path}")

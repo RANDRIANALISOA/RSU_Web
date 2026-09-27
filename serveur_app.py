@@ -25,6 +25,7 @@ import html as htmllib
 import http.cookies
 import http.server
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -43,16 +44,23 @@ import zones
 import utilisateurs
 import journal
 import admin
+import suppression
 import maj_db
 import transcription
 import logistique
 import equipes
+import declarations
+import vad_db
+import vad_core
+import vad_web
 import export_rapport
+import export_vad
 import prechargement
 import limites_db
 import manuel
 import consignes
 import rapport_mission
+import rapport_mission_users
 import rapport_word
 
 PORT = 8000
@@ -113,7 +121,11 @@ def preparer():
     den = db_source.DbDataset(conn, "den_menage")
     communes = den.col_decoded("commune")
     fkts = den.col_decoded("fokontany")
-    codes = den.col("num_fkt")
+    # Code fokontany : `num_fkt` (ancien questionnaire) ou `fokontany` lui-même
+    # (questionnaire de septembre 2026). Lire `num_fkt` en dur donnait la CHAÎNE
+    # 'num_fkt' sur chaque ligne (SQLite ne signale pas la colonne absente) ->
+    # l'arbre du menu n'avait plus qu'UN fokontany par commune.
+    codes = den.col(db_source.colonne_code_fokontany(den.varnames))
     arbre = {}
     for c, f, code in zip(communes, fkts, codes):
         if code is None:
@@ -149,6 +161,11 @@ def preparer():
     consignes.creer_tables(conn)
     # Base des Chefs d'Équipe / Agents (remplie par l'Expert Traitement).
     equipes.creer_tables(conn)
+    # Déclarations des agents (remplies par les Superviseurs Techniques) : après
+    # `agent`, cible de la clé étrangère `declaration_agent.code_agent`.
+    declarations.creer_tables(conn)
+    # Registre des ménages déjà préchargés (VAD), cf. prechargement.py.
+    prechargement.creer_tables(conn)
     # Clé étrangère agent sur interview__diagnostics (migration SQLite si besoin),
     # puis complétion de `agent` par les codes présents dans le dénombrement.
     if db_source.assurer_fk_diagnostics(conn):
@@ -249,16 +266,32 @@ _MENU_CHEMINS = {
     "Superviseur Technique": "/suptech",
 }
 
+# DÉCLARATIONS DES AGENTS (route /declaration) : le nombre de ménages que chaque
+# agent DÉCLARE avoir dénombrés / interviewés, saisi par le Superviseur Technique
+# à partir d'un modèle Excel (module declarations.py). À comparer, dans le rapport
+# Excel, avec ce qui est réellement ARRIVÉ AU SERVEUR.
+_ROLES_DECLARATION = utilisateurs.ROLES_DECLARATION
+
+# TABLEAU DE BORD VAD (routes /vad/<section>) : les rôles qui SUIVENT la collecte
+# de la visite à domicile. Chacun est borné à SON périmètre par perimetre() — le
+# Superviseur à ses communes, le Régional à ses districts, le National à tout.
+# = TOUS les rôles qui atteignent la fenêtre de sélection (choix du district +
+# « Dénombrement / Visite à domicile »), donc tout le monde SAUF les deux
+# Responsables Logistiques, seuls à ne pas avoir de tableau de bord (ils sont
+# renvoyés vers /logistique avant même /choix). L'ADMIN EN FAIT PARTIE : il
+# atteint /choix et y voit la vignette « Visite à domicile » comme les autres —
+# l'en exclure le renvoyait à /admin au moment d'ouvrir le dashboard.
+_ROLES_VAD = ("Coordonnateur Nationale", "Coordonnateur régionale",
+              "Traitement", "Superviseur Technique", "Expert survey",
+              "Comités Techniques", "Admin")
+
 # JOURNAL DE BORD (route /journal). Deux usages selon le rôle :
 #  - ÉCRITURE : toute l'équipe technique SAUF les deux coordonnateurs et l'Admin ;
 #    chacun consigne ses activités du jour (rappel si rien écrit aujourd'hui).
 #  - LECTURE : les deux coordonnateurs + l'Admin lisent les journaux des équipes,
 #    bornés à leur périmètre (National/Admin = tout, Régional = ses districts).
-_ROLES_JOURNAL_ECRITURE = ("Comités Techniques", "Traitement", "Expert survey",
-                           "Superviseur Technique", "Logistique District",
-                           "Logistique Inter-Communale")
-_ROLES_JOURNAL_LECTURE = ("Coordonnateur Nationale", "Coordonnateur régionale",
-                          "Admin")
+_ROLES_JOURNAL_ECRITURE = utilisateurs.ROLES_JOURNAL_ECRITURE
+_ROLES_JOURNAL_LECTURE = utilisateurs.ROLES_JOURNAL_LECTURE
 
 # RAPPORT DE MISSION — VERSION IA (Word). Réservé à des LOGINS précis (les deux
 # Coordonnateurs régionaux), et NON à un rôle : seuls ces comptes peuvent générer
@@ -272,11 +305,15 @@ def peut_rapport_ia(u) -> bool:
     """Vrai si l'utilisateur connecté peut accéder au rapport de mission IA (Word)."""
     return ((u or {}).get("login") or "").strip() in LOGINS_RAPPORT_IA
 
-# CONSIGNES / INSTRUCTIONS. Émetteurs = les deux Coordonnateurs (le National peut
-# viser tous les districts ; le Régional est borné à SES districts). Rôles
-# ciblables (destinataires) = tous les rôles sauf Admin (« Tout le monde » vise
-# tous ces rôles). Tout le monde peut RECEVOIR (bulle + page /consignes).
-_ROLES_CONSIGNE_ENVOI = ("Coordonnateur Nationale", "Coordonnateur régionale")
+# CONSIGNES / INSTRUCTIONS. Émetteurs = les deux Coordonnateurs et l'ADMIN (le
+# National et l'Admin peuvent viser tous les districts — perimetre() leur rend
+# None ; le Régional est borné à SES districts). L'Admin envoie depuis son propre
+# espace (lien « Consignes » de la barre /admin) et dispose des mêmes droits sur
+# SES consignes (modifier / supprimer). Rôles ciblables (destinataires) = tous les
+# rôles sauf Admin (« Tout le monde » vise tous ces rôles). Tout le monde peut
+# RECEVOIR (bulle + page /consignes).
+_ROLES_CONSIGNE_ENVOI = ("Coordonnateur Nationale", "Coordonnateur régionale",
+                         "Admin")
 _ROLES_CONSIGNE_CIBLES = tuple(
     r for r in utilisateurs.RESPONSABILITES if r != "Admin")
 
@@ -410,6 +447,32 @@ def rapport_vue(sel: dict, section: str, level: str, code,
             else:  # district : toutes les communes du périmètre (nav_tree)
                 ccodes = {z["ccode"] for z in nav_tree if z.get("ccode")}
             menages_attendus = zones.attendus_communes(conn, ccodes)
+        # ÉCART DÉCLARATION <-> SERVEUR (page « Par agent ») : ce que chaque agent
+        # DÉCLARE avoir dénombré (saisi par le Superviseur Technique) face à ce qui
+        # est ARRIVÉ au serveur. La déclaration est JOURNALIÈRE et GLOBALE (toutes
+        # zones confondues) : elle n'est pas ventilable par commune ni fokontany,
+        # on ne la calcule donc qu'au périmètre ENTIER (niveau « district », qui
+        # vaut « mes communes affectées » pour un Superviseur Technique).
+        declarations_agents = chefs_agents = None
+        if section == "agent" and level == "district":
+            codes_serveur = db_source.agents_du_perimetre(
+                conn,
+                district=(None if communes_autorisees else code_district),
+                communes=(sorted(communes_autorisees)
+                          if communes_autorisees else None))
+            ac = equipes.agents_et_chefs(conn)
+            declare = declarations.par_agent_date_perimetre(
+                conn, "DEN", codes_serveur, ac)
+            declarations_agents, chefs_agents = {}, {}
+            for (cd, d), n in declare.items():
+                # Même clé que les ménages : le NOM de l'agent s'il est renseigné.
+                cle = agents_noms.get(cd, cd)
+                declarations_agents[(cle, d)] = (
+                    declarations_agents.get((cle, d), 0) + n)
+            for cd in set(codes_serveur) | {c for c, _ in declare}:
+                info = ac.get(cd, {})
+                chefs_agents[agents_noms.get(cd, cd)] = (
+                    info.get("chef_nom") or info.get("chef_login") or "")
         out = rapport_core.generer_rapport(
             chemins,
             source=source,
@@ -424,6 +487,8 @@ def rapport_vue(sel: dict, section: str, level: str, code,
             nav_base=config.PREFIXE + "/vue",
             agents_noms=agents_noms,
             menages_attendus=menages_attendus,
+            declarations=declarations_agents,
+            chefs_agents=chefs_agents,
             contours_override=limites_db.contours_pour(conn, codes_geo))
         with open(out, "r", encoding="utf-8") as f:
             page = f.read()
@@ -788,6 +853,9 @@ def page_menu_operation(role: str, utilisateur=None) -> str:
     suite = "Ouvrir →" if fixe else "Choisir le district →"
     d_lieu = " de votre district." if fixe else " du district de votre choix."
     d_bord = "Consulter le rapport de suivi du dénombrement" + d_lieu
+    d_vad = ("Suivi des interviews au domicile des ménages" + d_lieu
+             + " Avancement, démographie, habitation, biens et actifs, eau et "
+               "assainissement, carte GPS, listing d’erreurs.")
     d_equipe = ("Voir l’encadrement (Coordonnateur régional, Superviseurs "
                 "Techniques par axe, Traitement, Expert survey)"
                 + (" affecté à votre district." if fixe
@@ -796,15 +864,31 @@ def page_menu_operation(role: str, utilisateur=None) -> str:
         f'<a class="ca" href="{href_bord}">'
         '<div class="ic">📊</div><div class="t">Tableau de bord — Dénombrement</div>'
         f'<div class="d">{d_bord}</div><div class="go">{esc(suite)}</div></a>'
+        # La VAD a son PROPRE tableau de bord (vad_web), et on y entre par le
+        # CHOIX DU DISTRICT comme pour le dénombrement (`?op=vad` -> sélection ->
+        # /suivi -> /vad/general borné au district choisi). Un rôle à district
+        # FIXE traverse cette route sans rien choisir (cf. _menu_operation_get).
         f'<a class="ca" href="{href_vad}">'
         '<div class="ic">🏠</div><div class="t">Tableau de bord — Visite à domicile</div>'
-        f'<div class="d">Suivi des visites à domicile (VAD){d_lieu} '
-        '<b>Bientôt disponible</b> — données VAD à venir.</div>'
+        f'<div class="d">{d_vad}</div>'
         f'<div class="go">{esc(suite)}</div></a>'
         f'<a class="ca" href="{href_equipe}">'
         '<div class="ic">👔</div><div class="t">Équipe technique</div>'
         f'<div class="d">{d_equipe}</div>'
         f'<div class="go">{"Ouvrir →" if fixe else esc(suite)}</div></a>')
+    # Carte « Déclaration des agents » — réservée au Superviseur Technique : c'est
+    # lui qui saisit, depuis un modèle Excel, ce que ses agents DÉCLARENT avoir
+    # dénombré (DEN) ou interviewé (VAD) chaque jour (cf. declarations.py).
+    if role in _ROLES_DECLARATION:
+        cartes += (
+            '<a class="ca" href="/declaration">'
+            '<div class="ic">📝</div>'
+            '<div class="t">Déclaration des nombres de ménages dénombrés / '
+            'interviewés par les Agents</div>'
+            '<div class="d">Saisir, à partir du modèle Excel, le nombre de '
+            'ménages que chaque agent déclare avoir dénombrés (dénombrement) ou '
+            'interviewés (VAD), par date.</div>'
+            '<div class="go">Ouvrir →</div></a>')
     # Carte « Journal » — au même niveau que les autres choix. Libellé/description
     # selon le rôle : écriture (équipe technique) ou lecture (coordonnateurs).
     if role in _ROLES_JOURNAL_ECRITURE or role in _ROLES_JOURNAL_LECTURE:
@@ -820,7 +904,8 @@ def page_menu_operation(role: str, utilisateur=None) -> str:
             f'<div class="t">{esc(t_j)}</div>'
             f'<div class="d">{esc(d_j)}</div>'
             '<div class="go">Ouvrir →</div></a>')
-    # Carte « Consignes & instructions » — rédaction, réservée aux Coordonnateurs.
+    # Carte « Consignes & instructions » — rédaction. L'Admin, lui, y accède par
+    # la barre de son espace (admin.py) : il ne passe pas par ce menu.
     if role in _ROLES_CONSIGNE_ENVOI:
         cartes += (
             '<a class="ca" href="/consignes/nouvelle">'
@@ -951,7 +1036,8 @@ def page_selection(erreur: str = "", utilisateur=None, op=None) -> str:
         (utilisateur or {}).get("responsabilite"), "/choix")
     op = (op or "").strip() or None
     _LIB_OP = {"den": "Tableau de bord (dénombrement)",
-               "vad": "Visite à domicile", "equipe": "Équipe technique"}
+               "vad": "Tableau de bord (visite à domicile)",
+               "equipe": "Équipe technique"}
     lien_menu = ""
     if op in _LIB_OP:
         bloc_suivi = (
@@ -1221,62 +1307,51 @@ def page_suivi(sel: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Page « Visite à domicile — pas encore disponible »
+# Pages « Visite à domicile » hors dashboard (base vide, choix du district)
 # ---------------------------------------------------------------------------
-def page_vad_indisponible(sel: dict) -> str:
-    esc = htmllib.escape
-    district = esc(str(sel.get("district_nom", "—")))
-    return f"""<!doctype html>
-<html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RSU 2026 — Visite à domicile</title>
-<style>
-  :root{{--rsu-fluid:1;font-size:clamp(11px, 0.18vw + 9.5px, 13px)}}
+def _vad_liens_zone(role: str, u, section: str, district=None) -> str:
+    """Bloc « Périmètre » de la barre latérale du tableau de bord VAD.
 
-  body{{font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430;margin:0;
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.375rem;
-    line-height:1.55;background:#0d2b4e}}
-  .fond{{position:fixed;inset:0;z-index:0;background:url(/img/accueil) center/cover no-repeat}}
-  .voile{{position:fixed;inset:0;z-index:0;background:linear-gradient(135deg,
-    rgba(13,43,78,.66),rgba(21,88,201,.46) 55%,rgba(23,163,152,.48))}}
-  .carte{{position:relative;z-index:2;width:100%;max-width:32.5rem;text-align:center;
-    background:rgba(255,255,255,.93);backdrop-filter:blur(0.875rem);
-    -webkit-backdrop-filter:blur(0.875rem);border-radius:1.25rem;
-    box-shadow:0 1.875rem 4.375rem rgba(0,0,0,.42);padding:2.375rem 2.125rem;animation:app .6s ease both}}
-  .ic{{width:4.75rem;height:4.75rem;margin:0 auto 1rem;border-radius:1.25rem;display:flex;
-    align-items:center;justify-content:center;color:#b7791f;
-    background:linear-gradient(135deg,#fff4d6,#ffe6a8)}}
-  h1{{font-size:1.35rem;margin:0 0 0.375rem}}
-  .ruban{{display:inline-block;font-size:.76rem;font-weight:700;color:#8a5a00;
-    background:#fff4d6;border:1px solid #f0d38a;border-radius:62.4375rem;padding:2px 0.6875rem;
-    margin-bottom:0.75rem}}
-  p{{color:#41505f;margin:0.5rem 0}}
-  .district{{font-weight:700;color:#1c2430}}
-  .actions{{display:flex;gap:0.625rem;margin-top:1.5rem;justify-content:center;flex-wrap:wrap}}
-  .btn{{padding:0.75rem 1.125rem;border-radius:0.6875rem;font-weight:700;text-decoration:none;
-    border:1.5px solid #dce3ea;color:#1c2430;background:#fff}}
-  .btn:hover{{background:#f4f7fb}}
-  .btn.p{{color:#fff;border:none;background:linear-gradient(135deg,#1b6ef3,#1558c9);
-    box-shadow:0 0.625rem 1.375rem rgba(27,110,243,.28)}}
-  @keyframes app{{from{{opacity:0;transform:translateY(1rem)}}to{{opacity:1;transform:none}}}}
-</style></head><body>
-  <div class="fond"></div><div class="voile"></div>
-  <div class="carte">
-    <div class="ic"><svg width="38" height="38" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/>
-      <path d="M12 7v6"/><path d="M12 16.5v.5"/></svg></div>
-    <span class="ruban">En cours de conception</span>
-    <h1>Suivi « Visite à domicile » indisponible</h1>
-    <p>Le suivi des <strong>interviews / visites à domicile</strong> n'est
-      <strong>pas encore disponible</strong> : les données correspondantes ne sont
-      pas encore intégrées à l'application. Cette vue est en cours de conception.</p>
-    <p>District demandé : <span class="district">{district}</span></p>
-    <div class="actions">
-      <a class="btn p" href="/">← Retour à la sélection</a>
-      <a class="btn" href="/logout">Se déconnecter</a>
-    </div>
-  </div>
-</body></html>"""
+    Le tableau de bord VAD se lit district par district, comme celui du
+    dénombrement : on redonne donc ici le CHOIX DU DISTRICT — retour à la fenêtre
+    de sélection (celle où « Visite à domicile » est à côté de « Dénombrement »),
+    et retour à tout le périmètre du rôle. Rien à afficher pour un rôle qui n'a
+    qu'un seul district (Traitement, Expert survey, Superviseur) : il n'a pas de
+    choix à faire."""
+    esc = htmllib.escape
+    pref = config.PREFIXE
+    districts = perimetre(u)[0]
+    if districts is not None and len(districts) <= 1:
+        return ""
+    choisir = (_MENU_CHEMINS[role] + "?op=vad") if role in _MENU_CHEMINS else "/choix"
+    liens = (f'<div style="padding:0 1rem 0.5rem">'
+             f'<a class="nav-item" href="{esc(pref + choisir)}">'
+             '⇄ Changer de district</a>')
+    if district is not None:
+        liens += (f'<a class="nav-item" href="{esc(pref)}/vad/{esc(section)}'
+                  '?district=tout">🌐 Tout mon périmètre</a>')
+    return liens + '</div>'
+
+
+def page_vad_vide(role: str) -> str:
+    """Le tableau de bord VAD existe, mais AUCUNE donnée n'a encore été transcrite.
+    On dit qui doit agir (l'Expert Traitement) plutôt qu'un « non disponible »."""
+    esc = htmllib.escape
+    return (
+        '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>RSU 2026 — Visite à domicile</title>'
+        f'<style>{admin._STYLE}</style></head><body>'
+        '<div class="bar"><b>🏠 Visite à domicile</b><span class="sp"></span></div>'
+        '<div class="wrap"><h1>Aucune donnée de visite à domicile</h1>'
+        '<div class="note">Le tableau de bord VAD est en place, mais la base ne '
+        'contient <b>encore aucune interview</b> pour votre périmètre.<br>'
+        'C’est l’<b>Expert Traitement</b> de chaque district qui téléverse et '
+        'transcrit l’export Survey Solutions du questionnaire RSUe, depuis son '
+        'espace (<i>Données de la Visite à domicile</i>). Revenez ici une fois la '
+        'transcription faite.</div>'
+        f'<p><a href="{esc(accueil_role(role))}">← Retour à mon espace</a></p>'
+        '</div></body></html>')
 
 
 # ---------------------------------------------------------------------------
@@ -1709,7 +1784,192 @@ _STYLE_JOURNAL = """
   .jr-filtres select:disabled{background:#eef1f5;color:#9aa6b3}
   .jr-actions{display:flex;gap:0.625rem;align-items:center;margin-top:1rem;flex-wrap:wrap}
   .jr-btn.sm{margin-top:0;padding:0.625rem 1.125rem}
+  .jr-pj-zone{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));
+    gap:0.5rem 1rem;margin-top:0.25rem}
+  input[type=file]{width:100%;padding:0.5rem;font-size:.9rem;background:#f7f9fc;
+    border:1.5px dashed #c7d2e0;border-radius:0.6875rem;color:#33415a;cursor:pointer}
+  input[type=file]:focus{border-color:#1b6ef3;background:#fff}
+  .jr-aide{color:#7a8698;font-size:.78rem;margin:0.25rem 0 0}
+  .jr-pjs{display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.625rem}
+  .jr-vign{display:inline-block;line-height:0;border:1px solid #dbe3ec;border-radius:0.5rem;
+    overflow:hidden;background:#f4f7fb}
+  .jr-vign img{height:4.5rem;width:auto;max-width:9rem;object-fit:cover;display:block}
+  .jr-pj{display:inline-flex;align-items:center;gap:0.25rem;font-size:.82rem;
+    color:#1558c9;text-decoration:none;background:#eef2f7;border:1px solid #dbe3ec;
+    border-radius:0.5rem;padding:0.3125rem 0.625rem;white-space:nowrap;max-width:100%;
+    overflow:hidden;text-overflow:ellipsis}
+  .jr-pj:hover{background:#e2ebf9;text-decoration:underline}
+  .jr-pj-sup{display:inline-flex;align-items:center;gap:0.25rem;font-size:.8rem;
+    color:#c0392b;background:#fdecea;border:1px solid #f0cfca;border-radius:0.5rem;
+    padding:0.3125rem 0.625rem;text-decoration:none}
+  .jr-pj-item{display:inline-flex;align-items:center;gap:0.375rem}
+  /* Pièce jointe EXISTANTE sur la page de modification : aperçu + case
+     « Retirer ». La case vit DANS le formulaire de modification — surtout pas
+     dans un <form> imbriqué, que le navigateur supprimerait (cf. §journal). */
+  .jr-pj-carte{display:inline-flex;flex-direction:column;gap:0.375rem;padding:0.5rem;
+    border:1px solid #dbe3ec;border-radius:0.625rem;background:#f9fbfd;max-width:11rem}
+  .jr-pj-carte:has(input:checked){background:#fdecea;border-color:#f0cfca}
+  .jr-pj-sup input{margin:0 0.375rem 0 0;accent-color:#c0392b}
+  .jr-pj-sup{cursor:pointer}
+  .jr-pj-sup input:checked ~ span{font-weight:700;text-decoration:line-through}
+  .jr-file-liste{display:flex;flex-wrap:wrap;gap:0.375rem;margin-top:0.5rem}
+  .jr-file-liste:empty{display:none}
+  .jr-file-chip{display:inline-flex;align-items:center;gap:0.375rem;font-size:.8rem;
+    color:#33415a;background:#eef2f7;border:1px solid #dbe3ec;border-radius:0.5rem;
+    padding:0.25rem 0.25rem 0.25rem 0.625rem;max-width:100%}
+  .jr-file-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:14rem}
+  .jr-file-x{border:none;background:#dbe3ec;color:#33415a;cursor:pointer;line-height:1;
+    font-size:.95rem;border-radius:0.375rem;padding:0.0625rem 0.4375rem}
+  .jr-file-x:hover{background:#c0392b;color:#fff}
+  .jr-file-n{font-size:.78rem;color:#5a6675;margin-top:0.25rem}
 """
+
+
+# Script (inline) : permet d'AJOUTER PLUSIEURS fichiers progressivement (en plusieurs
+# clics) au lieu de les remplacer à chaque sélection, avec liste + retrait unitaire.
+# S'appuie sur DataTransfer (large support navigateur) ; si absent, le <input multiple>
+# natif reste utilisable (sélection en une fois). N'affecte pas l'envoi (mêmes champs).
+_JOURNAL_PJ_SCRIPT = """
+<script>
+(function(){
+  if (typeof DataTransfer === "undefined") return;   // repli : multiple natif
+  document.querySelectorAll('input[type=file].jr-file-multi').forEach(function(inp){
+    var dt = new DataTransfer();
+    var liste = document.getElementById('liste-' + inp.id);
+    if (!liste) return;
+    function render(){
+      liste.innerHTML = '';
+      Array.prototype.forEach.call(dt.files, function(f, i){
+        var chip = document.createElement('span'); chip.className = 'jr-file-chip';
+        var nom = document.createElement('span'); nom.textContent = f.name;
+        var x = document.createElement('button'); x.type = 'button';
+        x.className = 'jr-file-x'; x.textContent = '\\u00d7';
+        x.setAttribute('aria-label', 'Retirer ' + f.name);
+        x.addEventListener('click', function(){
+          var ndt = new DataTransfer();
+          Array.prototype.forEach.call(dt.files, function(g, j){
+            if (j !== i) ndt.items.add(g);
+          });
+          dt = ndt; inp.files = dt.files; render();
+        });
+        chip.appendChild(nom); chip.appendChild(x); liste.appendChild(chip);
+      });
+    }
+    inp.addEventListener('change', function(){
+      Array.prototype.forEach.call(inp.files, function(f){
+        var dup = false;
+        Array.prototype.forEach.call(dt.files, function(g){
+          if (g.name === f.name && g.size === f.size) dup = true;
+        });
+        if (!dup) dt.items.add(f);
+      });
+      inp.files = dt.files; render();
+    });
+  });
+})();
+</script>"""
+
+
+# Script (inline) : FILET DE SÉCURITÉ pour la saisie du journal. Une entrée longue se
+# tape en plusieurs dizaines de minutes ; sans requête pendant ce temps la session
+# expire (INACTIVITE_MAX), et l'envoi repartait alors vers /login — TOUT LE TEXTE
+# ÉTAIT PERDU (bug signalé par les équipes, sept. 2026). Trois protections :
+#   1. BROUILLON : le texte est copié dans localStorage à chaque frappe (anti-perte
+#      même en cas de coupure réseau, fermeture d'onglet ou redémarrage du serveur)
+#      et restitué à la réouverture de la page. Effacé seulement quand la page
+#      revient avec la confirmation d'enregistrement (?ok=1 / ?maj=1).
+#   2. MAINTIEN DE SESSION : tant que la zone de texte n'est pas vide, un appel
+#      léger à /journal/ping toutes les 4 min rafraîchit la session -> elle
+#      n'expire plus pendant la rédaction.
+#   3. ALERTES : bandeau visible si la session est tombée malgré tout, et
+#      confirmation avant de quitter la page avec du texte non enregistré.
+_JS_BROUILLON = r"""
+<script>
+(function(){
+  var ta = document.getElementById('journal');
+  var form = ta && ta.form;
+  if (!ta || !form) return;
+  var CLE = '__CLE__';
+  var confirme = /[?&](ok|maj)=1(&|$)/.test(location.search);
+  function lire(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+  function ecrire(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
+  function oublier(k){ try { localStorage.removeItem(k); } catch(e){} }
+
+  // Bandeau d'information au-dessus de la zone de saisie.
+  var avis = document.createElement('div');
+  avis.className = 'jr-msg';
+  avis.style.display = 'none';
+  ta.parentNode.insertBefore(avis, ta);
+  function dire(txt, erreur){
+    avis.textContent = txt;
+    avis.className = 'jr-msg ' + (erreur ? 'err' : 'ok');
+    avis.style.display = '';
+  }
+
+  // Texte tel que le serveur l'a livré : vide en création, entrée enregistrée en
+  // modification. Un brouillon n'est restitué que s'il en DIFFÈRE (sinon il n'a
+  // rien à apporter) et si l'utilisateur n'a pas déjà retouché la zone.
+  var initial = ta.value;
+  if (confirme) {
+    oublier(CLE);                      // enregistrement confirmé -> brouillon inutile
+    var fini = new URLSearchParams(location.search).get('e');
+    if (fini) oublier(CLE.replace(/[^.]*$/, fini));   // idem pour l'entrée modifiée
+  } else {
+    var brouillon = lire(CLE);
+    if (brouillon && brouillon !== initial && ta.value === initial) {
+      ta.value = brouillon;
+      dire('Brouillon récupéré : le texte que vous aviez saisi n’avait pas été '
+           + 'enregistré, il a été restauré. Vérifiez-le puis enregistrez.', false);
+    }
+  }
+
+  // 1) Sauvegarde locale à chaque frappe (différée pour ne pas écrire en continu).
+  var minuteur = null;
+  ta.addEventListener('input', function(){
+    if (minuteur) clearTimeout(minuteur);
+    minuteur = setTimeout(function(){
+      if (ta.value.trim() && ta.value !== initial) ecrire(CLE, ta.value);
+      else oublier(CLE);
+    }, 400);
+  });
+
+  // 2) Maintien de la session pendant la rédaction (toutes les 4 minutes).
+  setInterval(function(){
+    if (!ta.value.trim()) return;
+    fetch('__PING__', {credentials: 'same-origin', redirect: 'manual',
+                       cache: 'no-store'})
+      .then(function(r){
+        // Session tombée : /journal/ping répond par une redirection vers /login
+        // (opaque ici, car redirect:'manual'). On prévient SANS toucher au texte.
+        if (r.type === 'opaqueredirect' || r.status === 401 || r.status === 403) {
+          dire('Votre session a expiré. Votre texte est conservé ici : '
+               + 'reconnectez-vous dans un AUTRE onglet, puis revenez enregistrer.',
+               true);
+        }
+      })
+      .catch(function(){});
+  }, 240000);
+
+  // 3) Garde-fou : ne pas quitter la page avec du texte non enregistré.
+  var envoi = false;
+  form.addEventListener('submit', function(){ envoi = true; });
+  window.addEventListener('beforeunload', function(e){
+    if (envoi || !ta.value.trim()) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+})();
+</script>"""
+
+
+def _journal_brouillon_script(cle: str) -> str:
+    """Script de brouillon/maintien de session pour UNE page de saisie du journal.
+    `cle` identifie le brouillon dans le navigateur (par utilisateur et par entrée,
+    pour que deux saisies différentes ne s'écrasent pas)."""
+    return (_JS_BROUILLON
+            .replace("__CLE__", htmllib.escape(cle, quote=False)
+                     .replace("\\", "").replace("'", ""))
+            .replace("__PING__", PREFIXE + "/journal/ping"))
 
 
 def _journal_entree_html(e) -> str:
@@ -1726,7 +1986,8 @@ def _journal_entree_html(e) -> str:
         f'{mod}'
         f'<a class="jr-mod" href="/journal/modifier?id={esc(e.get("id") or "")}">'
         '✏️ Modifier</a></div>'
-        f'<p class="jr-txt">{esc(e["journal"] or "")}</p></div>')
+        f'<p class="jr-txt">{esc(e["journal"] or "")}</p>'
+        f'{_journal_fichiers_html(e.get("fichiers"))}</div>')
 
 
 def page_journal_modifier(u, entree, erreur: str = "") -> str:
@@ -1740,6 +2001,46 @@ def page_journal_modifier(u, entree, erreur: str = "") -> str:
     bloc = f'<div class="jr-msg err">{esc(erreur)}</div>' if erreur else ''
     maj = (f'<span><b>Dernière modification :</b> {esc(entree.get("modifie_court"))}'
            '</span>' if entree.get("modifie_le") else '')
+    # Pièces jointes EXISTANTES : aperçu + case « Retirer ».
+    #
+    # ⚠️ Surtout PAS un <form> de suppression par fichier ici : ce bloc est à
+    # l'intérieur du formulaire de modification, et un <form> DANS un <form> est
+    # interdit en HTML. Le navigateur supprimait la 1re balise imbriquée (son
+    # bouton se rattachait alors au formulaire de modification) et le </form>
+    # orphelin FERMAIT le formulaire principal — les champs « Ajouter des photos /
+    # fichiers » et le bouton « Enregistrer » se retrouvaient HORS formulaire, donc
+    # inertes. D'où : des cases à cocher, envoyées avec le reste du formulaire, et
+    # une seule validation qui applique texte + retraits + ajouts.
+    fichiers = entree.get("fichiers") or []
+    if fichiers:
+        items = []
+        for f in fichiers:
+            ident = esc(f.get("id") or "")
+            nom = esc(f.get("nom_fichier") or "fichier")
+            ext = os.path.splitext(f.get("nom_fichier") or "")[1].lower()
+            url = config.PREFIXE + "/journal/fichier?id=" + ident
+            ko = round((f.get("taille") or 0) / 1024)
+            if f.get("categorie") == "image" and ext in _IMG_INLINE:
+                apercu = (f'<a class="jr-vign" href="{url}" target="_blank" '
+                          f'title="{nom}"><img src="{url}" alt="{nom}" '
+                          'loading="lazy"></a>')
+            else:
+                apercu = (f'<a class="jr-pj" href="{url}" target="_blank">'
+                          f'📎 {nom}</a>')
+            items.append(
+                '<div class="jr-pj-carte">'
+                f'{apercu}'
+                f'<span class="jr-aide" title="{nom}">{nom} · {ko} Ko</span>'
+                '<label class="jr-pj-sup">'
+                f'<input type="checkbox" name="supprimer" value="{ident}">'
+                '<span>Retirer</span></label></div>')
+        bloc_pj = ('<label style="margin-top:1rem">Pièces jointes actuelles</label>'
+                   '<p class="jr-aide">Cochez celles à <b>retirer</b>, ajoutez-en '
+                   'd’autres ci-dessous : tout est appliqué en une fois quand vous '
+                   'enregistrez.</p>'
+                   '<div class="jr-pjs">' + "".join(items) + '</div>')
+    else:
+        bloc_pj = ''
     return (
         '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -1754,7 +2055,8 @@ def page_journal_modifier(u, entree, erreur: str = "") -> str:
         f'<span><b>Axe / Zone :</b> {esc(entree.get("zone") or "—")}</span>'
         f'<span><b>Créé le :</b> {esc(entree.get("cree_court"))}</span>'
         f'{maj}</div>'
-        '<form method="post" action="/journal/modifier">'
+        '<form method="post" action="/journal/modifier" '
+        'enctype="multipart/form-data">'
         f'<input type="hidden" name="id" value="{esc(entree.get("id") or "")}">'
         '<label for="date_jour">Date</label>'
         f'<input type="date" id="date_jour" name="date_jour" '
@@ -1763,14 +2065,30 @@ def page_journal_modifier(u, entree, erreur: str = "") -> str:
         '<label for="journal">Activités de la journée</label>'
         f'<textarea id="journal" name="journal" required>{esc(entree.get("journal") or "")}'
         '</textarea>'
+        f'{bloc_pj}'
+        '<div class="jr-pj-zone">'
+        '<div><label for="images">Ajouter des photos / images</label>'
+        '<input type="file" id="images" name="images" class="jr-file-multi" '
+        'multiple accept="image/*">'
+        '<p class="jr-aide">Cliquez plusieurs fois pour en ajouter d’autres.</p>'
+        '<div class="jr-file-liste" id="liste-images"></div></div>'
+        '<div><label for="fichiers">Ajouter d’autres fichiers</label>'
+        '<input type="file" id="fichiers" name="fichiers" class="jr-file-multi" multiple>'
+        '<p class="jr-aide">Cliquez plusieurs fois pour en ajouter d’autres.</p>'
+        '<div class="jr-file-liste" id="liste-fichiers"></div></div>'
+        '</div>'
         '<div class="jr-actions"><button type="submit" class="jr-btn">'
         'Enregistrer les modifications</button>'
         '<a class="jr-retour" href="/journal" style="margin-top:0">Annuler</a></div>'
-        '</form></div></div></body></html>')
+        '</form></div></div>'
+        f'{_JOURNAL_PJ_SCRIPT}'
+        f'{_journal_brouillon_script("rsu.journal.%s.%s" % (u.get("login") or "", entree.get("id") or ""))}'
+        '</body></html>')
 
 
 def page_journal_ecrire(u, zone, code_district, date_defaut, mes_entrees,
-                        message: str = "", erreur: str = "") -> str:
+                        message: str = "", erreur: str = "",
+                        texte: str = "") -> str:
     """Page « Mon journal de bord » (rôles d'écriture) : formulaire d'entrée du
     jour (nom/fonction/zone pré-remplis, non saisis) + mes dernières entrées."""
     esc = htmllib.escape
@@ -1803,16 +2121,41 @@ def page_journal_ecrire(u, zone, code_district, date_defaut, mes_entrees,
         f'<span><b>Nom et Prénom :</b> {esc(nom or "—")}</span>'
         f'<span><b>Fonction / Poste :</b> {esc(role or "—")}</span>'
         f'<span><b>Axe / Zone :</b> {esc(zone or "—")}</span></div>'
-        '<form method="post" action="/journal">'
+        '<form method="post" action="/journal" enctype="multipart/form-data">'
         '<div class="jr-form-en-ligne"><div>'
         '<label for="date_jour">Date</label>'
         f'<input type="date" id="date_jour" name="date_jour" '
         f'value="{esc(date_defaut)}" max="{esc(date_defaut)}" required></div></div>'
         '<label for="journal">Activités de la journée</label>'
         '<textarea id="journal" name="journal" required '
-        'placeholder="Décrivez les activités réalisées aujourd’hui…"></textarea>'
+        'placeholder="Décrivez les activités réalisées aujourd’hui…">'
+        f'{esc(texte or "")}</textarea>'
+        '<div class="jr-pj-zone">'
+        '<div><label for="images">Photos / images (facultatif)</label>'
+        '<input type="file" id="images" name="images" class="jr-file-multi" '
+        'multiple accept="image/*">'
+        '<p class="jr-aide">JPG, PNG, GIF… Cliquez plusieurs fois pour en ajouter '
+        'd’autres ; chaque fichier peut être retiré avant l’envoi.</p>'
+        '<div class="jr-file-liste" id="liste-images"></div></div>'
+        '<div><label for="fichiers">Autres fichiers (facultatif)</label>'
+        '<input type="file" id="fichiers" name="fichiers" class="jr-file-multi" multiple>'
+        '<p class="jr-aide">Word, Excel, PDF… Cliquez plusieurs fois pour en ajouter '
+        'd’autres.</p>'
+        '<div class="jr-file-liste" id="liste-fichiers"></div></div>'
+        '</div>'
         '<div><button type="submit" class="jr-btn">Enregistrer dans mon journal'
         '</button></div></form></div>'
+        f'{_JOURNAL_PJ_SCRIPT}'
+        f'{_journal_brouillon_script("rsu.journal.%s.nouveau" % (u.get("login") or ""))}'
+        '<div class="jr-carte">'
+        '<h2 class="jr-h2" style="margin-top:0">Mon rapport de mission</h2>'
+        '<p style="margin:.2rem 0 .8rem;color:#4b5563">Un rapport Word est compilé '
+        'automatiquement à partir de votre journal de bord (page de garde, '
+        'chronologie, itinéraire, pièces jointes). Il est mis à jour '
+        'périodiquement.</p>'
+        '<a class="jr-btn" href="/journal/rapport.docx" '
+        'style="text-decoration:none;display:inline-block">⬇ Télécharger mon '
+        'rapport (Word)</a></div>'
         '<div class="jr-carte">'
         '<div style="display:flex;justify-content:space-between;align-items:baseline;'
         'flex-wrap:wrap;gap:8px">'
@@ -2267,7 +2610,7 @@ def _consigne_districts_widget(districts_perim, selection=None) -> str:
 
 def page_consignes_nouvelle(u, envoyees, districts_perim,
                             message: str = "", erreur: str = "", edition=None) -> str:
-    """Page de RÉDACTION d'une consigne (Coordonnateurs) : message + destinataires
+    """Page de RÉDACTION d'une consigne (Coordonnateurs + Admin) : message + destinataires
     (rôles) + districts concernés, puis liste des consignes déjà envoyées.
     `edition` (dict consigne avec au moins id/roles_cibles/districts_cibles/titre/
     message) -> mode MODIFICATION : formulaire pré-rempli, POST vers /consignes/
@@ -2404,12 +2747,12 @@ def page_consignes_recues(u, recues, est_emetteur, filtres=None) -> str:
     """Page de RÉCEPTION : consignes adressées à l'utilisateur (marquées lues à
     l'ouverture). `est_emetteur` ajoute un bouton « Écrire une consigne ».
     `filtres` = {date, poste} : filtre d'affichage (date d'émission, poste de
-    l'émetteur — Coordonnateur Nationale / régionale)."""
+    l'émetteur — Coordonnateur Nationale / régionale, ou Admin)."""
     esc = htmllib.escape
     role = (u.get("responsabilite") or "").strip()
     filtres = filtres or {}
     actif = bool(filtres.get("date") or filtres.get("poste") or filtres.get("nom"))
-    # Filtre « Poste » : les émetteurs possibles = les deux Coordonnateurs.
+    # Filtre « Poste » : les émetteurs possibles (les deux Coordonnateurs + Admin).
     opts_poste = ['<option value="">— Tous les postes —</option>']
     for p in _ROLES_CONSIGNE_ENVOI:
         sel = ' selected' if p == (filtres.get("poste") or "") else ''
@@ -2551,11 +2894,13 @@ _STYLE_RESPONSIVE = (
     # 'load' : re-vérifie une fois le CSS externe (rapport.css) appliqué.
     "f();window.addEventListener('resize',f);window.addEventListener('load',f);"
     # Bouton REPLIER/DÉPLIER la barre latérale des sections (dashboard uniquement :
-    # n'agit que si .sidebar + .topbar existent). Ajoute un ☰ dans la barre du haut ;
-    # bascule body.rsu-nav-col (CSS dans rapport.css). État mémorisé ; replié par
-    # défaut sur petit écran.
+    # n'agit que si .sidebar existe). Ajoute un ☰ dans la barre du haut du rapport
+    # (.topbar) ou, à défaut, dans l'en-tête de page du tableau de bord VAD
+    # (.page-head), qui n'a pas de .topbar. Bascule body.rsu-nav-col (CSS dans
+    # rapport.css). État mémorisé ET PARTAGÉ par les deux tableaux de bord ;
+    # replié par défaut sur petit écran.
     "function nav(){var sb=document.querySelector('.sidebar'),"
-    "tb=document.querySelector('.topbar');"
+    "tb=document.querySelector('.topbar')||document.querySelector('.page-head');"
     "if(!sb||!tb||document.getElementById('rsu-nav-toggle'))return;"
     "var btn=document.createElement('button');btn.id='rsu-nav-toggle';"
     "btn.type='button';btn.className='rsu-nav-toggle';btn.innerHTML='\\u2630';"
@@ -2892,6 +3237,148 @@ def bulle_consignes(sess) -> str:
 
 
 # ---------------------------------------------------------------------------
+# FENÊTRE D'ACCUEIL DES CONSIGNES : à la connexion, les consignes NON LUES
+# s'ouvrent au MILIEU de l'écran, en grand — une à la fois. L'utilisateur ferme
+# la première (✕, « Fermer », ou Échap), la suivante prend sa place, et ainsi de
+# suite. Fermer, c'est REPORTER, jamais « j'ai lu » : rien n'est écrit, la consigne
+# reste « à lire », et la BULLE DE RAPPEL (bulle_consignes, sous la fenêtre) demeure
+# pour la rouvrir plus tard. Seule l'ouverture de /consignes vaut accusé de lecture.
+#
+# Elle ne s'ouvre QU'UNE FOIS, à l'arrivée sur son espace : `_traiter_login` pose
+# le drapeau `_consignes_modale` dans la session, et la 1re page HTML servie le
+# consomme. Une consigne reçue PENDANT la session ne vient donc pas interrompre
+# une saisie en cours : elle se signale par la bulle (`bulle_consignes`).
+# ---------------------------------------------------------------------------
+_CONSIGNES_MODALE_MAX = 20      # garde-fou : on n'empile pas 200 fenêtres
+
+
+def modale_consignes(sess) -> str:
+    """Fenêtre centrée des consignes non lues, ou "" (drapeau absent / rien à lire).
+
+    CONSOMME le drapeau de session dans tous les cas : la fenêtre appartient à
+    l'arrivée sur le compte, pas au reste de la navigation."""
+    if not sess or not sess.get("_consignes_modale"):
+        return ""
+    u = sess.get("utilisateur") or {}
+    role = (u.get("responsabilite") or "").strip()
+    login = sess.get("login") or u.get("login")
+    sess.pop("_consignes_modale", None)
+    if not role or not login:
+        return ""
+    conn = db_source.connect()
+    try:
+        recues = consignes.pour_utilisateur(conn, login, role, perimetre(u)[0])
+    finally:
+        conn.close()
+    a_lire = [c for c in recues if not c["lu"]][:_CONSIGNES_MODALE_MAX]
+    if not a_lire:
+        return ""
+    esc = htmllib.escape
+    items = []
+    for c in a_lire:
+        titre = (c.get("titre") or "").strip() or "Consigne"
+        msg = esc(c.get("message") or "").replace("\n", "<br>")
+        auteur = esc(c.get("auteur_nom") or c.get("auteur_login") or "—")
+        poste = esc(c.get("auteur_role") or "")
+        items.append(
+            f'<article class="rsu-csm-item" data-id="{esc(c["id"])}">'
+            f'<h2 class="rsu-csm-titre">{esc(titre)}</h2>'
+            '<p class="rsu-csm-meta">'
+            f'<b>{auteur}</b>' + (f' · {poste}' if poste else '') +
+            f' · {esc(c.get("cree_court") or "")}</p>'
+            f'<div class="rsu-csm-txt">{msg}</div></article>')
+    url = config.PREFIXE + "/consignes"
+    return (
+        '<div id="rsu-cs-modale" role="dialog" aria-modal="true" '
+        'aria-labelledby="rsu-csm-cpt">'
+        '<div class="rsu-csm-fond"></div>'
+        '<div class="rsu-csm-boite">'
+        '<header class="rsu-csm-tete">'
+        '<span class="rsu-csm-ic">📣</span>'
+        '<span class="rsu-csm-cpt" id="rsu-csm-cpt"></span>'
+        '<button type="button" class="rsu-csm-x" aria-label="Fermer cette consigne"'
+        ' title="Fermer cette consigne">&times;</button></header>'
+        '<div class="rsu-csm-corps">' + "".join(items) + '</div>'
+        '<footer class="rsu-csm-pied">'
+        '<span class="rsu-csm-note">Fermer ne la supprime pas : elle reste '
+        f'« à lire » — rouvrez-la quand vous aurez le temps par <a href="{url}">'
+        'Consignes</a> (bulle en haut à gauche).</span>'
+        '<button type="button" class="rsu-csm-ok"></button></footer>'
+        '</div>'
+        '<style>'
+        '#rsu-cs-modale{position:fixed;inset:0;z-index:2147483000;display:flex;'
+        'align-items:center;justify-content:center;padding:24px;'
+        'font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#1c2430}'
+        '#rsu-cs-modale .rsu-csm-fond{position:absolute;inset:0;'
+        'background:rgba(9,25,48,.55)}'
+        '#rsu-cs-modale .rsu-csm-boite{position:relative;display:flex;'
+        'flex-direction:column;width:min(760px,94vw);max-height:86vh;background:#fff;'
+        'border-radius:18px;border-top:6px solid #1b6ef3;'
+        'box-shadow:0 24px 64px rgba(9,25,48,.38);overflow:hidden}'
+        '#rsu-cs-modale .rsu-csm-tete{display:flex;align-items:center;gap:10px;'
+        'padding:16px 20px;border-bottom:1px solid #e6ecf5;background:#f6f9ff}'
+        '#rsu-cs-modale .rsu-csm-ic{font-size:1.5rem;line-height:1}'
+        '#rsu-cs-modale .rsu-csm-cpt{flex:1;font-weight:700;font-size:.95rem;'
+        'color:#12325c}'
+        '#rsu-cs-modale .rsu-csm-x{border:none;background:transparent;cursor:pointer;'
+        'font-size:1.9rem;line-height:1;color:#6b7c95;padding:0 6px;border-radius:8px}'
+        '#rsu-cs-modale .rsu-csm-x:hover{background:#e6ecf5;color:#12325c}'
+        '#rsu-cs-modale .rsu-csm-corps{padding:22px 26px;overflow:auto}'
+        '#rsu-cs-modale .rsu-csm-titre{margin:0 0 6px;font-size:1.35rem;'
+        'line-height:1.25;color:#12325c}'
+        '#rsu-cs-modale .rsu-csm-meta{margin:0 0 16px;font-size:.85rem;color:#5b6b83}'
+        '#rsu-cs-modale .rsu-csm-txt{font-size:1.05rem;line-height:1.6;'
+        'white-space:normal;word-wrap:break-word}'
+        '#rsu-cs-modale .rsu-csm-pied{display:flex;align-items:center;gap:14px;'
+        'padding:14px 20px;border-top:1px solid #e6ecf5;background:#fbfcfe}'
+        '#rsu-cs-modale .rsu-csm-note{flex:1;font-size:.82rem;color:#5b6b83;'
+        'line-height:1.45}'
+        '#rsu-cs-modale .rsu-csm-note a{color:#1b6ef3;font-weight:600}'
+        '#rsu-cs-modale .rsu-csm-ok{border:none;cursor:pointer;font-weight:700;'
+        'font-size:.95rem;color:#fff;background:#1b6ef3;border-radius:10px;'
+        'padding:11px 20px;font-family:inherit}'
+        '#rsu-cs-modale .rsu-csm-ok:hover{background:#1558c9}'
+        '@media (max-width:600px){'
+        '#rsu-cs-modale{padding:10px}'
+        '#rsu-cs-modale .rsu-csm-boite{width:100%;max-height:92vh}'
+        '#rsu-cs-modale .rsu-csm-corps{padding:16px 16px}'
+        '#rsu-cs-modale .rsu-csm-pied{flex-wrap:wrap}'
+        '#rsu-cs-modale .rsu-csm-ok{flex:1 0 100%;text-align:center}}'
+        '@media print{#rsu-cs-modale{display:none!important}}'
+        '</style>'
+        '<script>(function(){'
+        'var m=document.getElementById("rsu-cs-modale");if(!m)return;'
+        'var items=[].slice.call(m.querySelectorAll(".rsu-csm-item"));'
+        'if(!items.length){m.parentNode.removeChild(m);return;}'
+        'var i=0,cpt=m.querySelector(".rsu-csm-cpt"),ok=m.querySelector(".rsu-csm-ok");'
+        'var corps=m.querySelector(".rsu-csm-corps");'
+        'function montre(){'
+        'for(var k=0;k<items.length;k++){items[k].style.display=(k===i)?"":"none";}'
+        'cpt.textContent=(items.length>1)?("Consigne "+(i+1)+" sur "+items.length)'
+        ':"Consigne \u00e0 lire";'
+        'ok.textContent=(i<items.length-1)?"Fermer et voir la suivante":"Fermer";'
+        'corps.scrollTop=0;}'
+        # Fermer = REPORTER, pas « lu » : rien n'est envoyé au serveur, et la bulle
+        # (#rsu-consigne, déjà dans la page, sous la fenêtre) est LAISSÉE EN PLACE
+        # pour rouvrir la consigne plus tard. Elle ne s'éteindra qu'à la lecture
+        # effective, sur /consignes.
+        'function fermer(){'
+        'i++;'
+        'if(i>=items.length){'
+        'if(m.parentNode)m.parentNode.removeChild(m);'
+        'document.body.style.overflow=OVF;return;}'
+        'montre();}'
+        'ok.addEventListener("click",fermer);'
+        'm.querySelector(".rsu-csm-x").addEventListener("click",fermer);'
+        'document.addEventListener("keydown",function(e){'
+        'if((e.key==="Escape"||e.keyCode===27)&&m.parentNode)fermer();});'
+        # Le fond n'est PAS cliquable : on ne saute pas une consigne par mégarde.
+        'var OVF=document.body.style.overflow;document.body.style.overflow="hidden";'
+        'montre();ok.focus();'
+        '})();</script></div>')
+
+
+# ---------------------------------------------------------------------------
 # Téléversement d'un DOSSIER (webkitdirectory) : préserver les sous-dossiers
 # ---------------------------------------------------------------------------
 def _relpath_upload(nom: str) -> str:
@@ -2917,6 +3404,81 @@ def _sous_dossier(base: str, cible: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Pièces jointes du JOURNAL DE BORD (images / fichiers rangés par district)
+# ---------------------------------------------------------------------------
+# Extensions considérées comme IMAGE -> dossier Rapport_Images (les autres ->
+# Rapport_Fichier). Sous-ensemble « affichable en vignette » servi INLINE ; les
+# autres (svg, tiff, heic…) sont servis en téléchargement (pièce jointe) — pas
+# d'inline SVG (risque de script), pas d'aperçu pour les formats non universels.
+_EXT_IMAGE = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp",
+              ".tif", ".tiff", ".heic", ".heif", ".svg"}
+_IMG_INLINE = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+# Taille maxi par fichier (garde-fou mémoire ; l'upload passe en RAM via `email`).
+_TAILLE_MAX_FICHIER = 25 * 1024 * 1024      # 25 Mo
+
+
+def _categorie_fichier(nom: str) -> str:
+    """« image » si l'extension est une image, sinon « fichier » (Word/Excel/PDF…)."""
+    return "image" if os.path.splitext(nom or "")[1].lower() in _EXT_IMAGE else "fichier"
+
+
+def _nom_sur(nom: str) -> str:
+    """Nom de fichier SÛR pour le système de fichiers : basename seul, caractères
+    dangereux remplacés. Ne sert qu'au STOCKAGE (le nom d'origine est gardé en base)."""
+    base = os.path.basename((nom or "").replace("\\", "/")).strip().strip(".")
+    base = re.sub(r"[^A-Za-z0-9._ +()\-]", "_", base)
+    return (base or "fichier")[:150]
+
+
+def _dossier_district(codes) -> str:
+    """Nom du sous-dossier district = PREMIER code (les rôles d'écriture ont un seul
+    district, sauf Comités Techniques -> on range sous son 1er district). Nettoyé."""
+    prem = (str(codes or "").split(",")[0] or "").strip()
+    prem = re.sub(r"[^A-Za-z0-9_\-]", "", prem)
+    return prem or "sans_district"
+
+
+def _dossier_login(login) -> str:
+    """Nom du sous-dossier utilisateur (sous le dossier district) = son login,
+    nettoyé pour le système de fichiers."""
+    seg = re.sub(r"[^A-Za-z0-9_\-]", "_", (str(login or "").strip()))
+    return seg or "sans_login"
+
+
+def _journal_fichiers_html(fichiers) -> str:
+    """Rend les pièces jointes d'une entrée : vignettes pour les images affichables,
+    liens de téléchargement pour le reste. Vide si aucune pièce jointe."""
+    if not fichiers:
+        return ""
+    esc = htmllib.escape
+    url = config.PREFIXE + "/journal/fichier?id="
+    elems = []
+    for f in fichiers:
+        ident = esc(f.get("id") or "")
+        nom = esc(f.get("nom_fichier") or "fichier")
+        ext = os.path.splitext(f.get("nom_fichier") or "")[1].lower()
+        if f.get("categorie") == "image" and ext in _IMG_INLINE:
+            elems.append(
+                f'<a class="jr-vign" href="{url}{ident}" target="_blank" title="{nom}">'
+                f'<img src="{url}{ident}" alt="{nom}" loading="lazy"></a>')
+        else:
+            elems.append(
+                f'<a class="jr-pj" href="{url}{ident}" target="_blank">📎 {nom}</a>')
+    return '<div class="jr-pjs">' + "".join(elems) + '</div>'
+
+
+def _attacher_fichiers(conn, entrees):
+    """Renseigne e['fichiers'] (liste de pièces jointes) pour chaque entrée, en une
+    seule requête. Renvoie `entrees` (muté)."""
+    if not entrees:
+        return entrees
+    par = journal.fichiers_par_activite(conn, [e.get("id") for e in entrees])
+    for e in entrees:
+        e["fichiers"] = par.get(str(e.get("id") or ""), [])
+    return entrees
+
+
+# ---------------------------------------------------------------------------
 # Serveur HTTP
 # ---------------------------------------------------------------------------
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -2937,9 +3499,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         chemin_courant = self.path.split("?", 1)[0]
         if chemin_courant not in (PREFIXE + "/journal",):
             bandeau += bulle_rappel_journal(sess_courante)
-        # Bulle des consignes non lues, SAUF sur la page /consignes (on y va lire).
+        # Consignes non lues, SAUF sur la page /consignes (on y va justement lire) :
+        # à l'ARRIVÉE sur son compte, elles s'ouvrent en fenêtre centrée (une à la
+        # fois) ; ensuite, une simple bulle de rappel. Jamais les deux à la fois —
+        # la fenêtre porte déjà le compte et se charge de retirer la bulle.
         if chemin_courant not in (PREFIXE + "/consignes",):
+            # La bulle est TOUJOURS posée (elle sert de rappel une fois la fenêtre
+            # fermée) ; la fenêtre vient PAR-DESSUS, et seulement sur une page servie
+            # NORMALEMENT : une page d'erreur ne doit pas consommer le drapeau (la
+            # fenêtre s'ouvrirait puis disparaîtrait avec la page).
             bandeau += bulle_consignes(sess_courante)
+            if code == 200:
+                bandeau += modale_consignes(sess_courante)
         if bandeau:
             contenu = _RE_BODY.sub(lambda m: m.group(1) + bandeau, contenu, count=1)
         # Normalisation d'affichage (Phase 1) : injectée juste avant </head> sur
@@ -3068,6 +3639,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._equipe_get(sess)
             return
 
+        # Battement de coeur de la SAISIE du journal : appelé par la page de
+        # rédaction tant que la zone de texte n'est pas vide. Ne renvoie rien (204) ;
+        # son seul effet utile est d'avoir traversé _session(), qui remet à zéro le
+        # compteur d'inactivité -> la session ne meurt plus pendant qu'on rédige une
+        # entrée longue. Session absente = on n'arrive jamais ici (redirigé /login),
+        # ce que la page détecte pour prévenir l'utilisateur sans perdre son texte.
+        if chemin == "/journal/ping":
+            self.send_response(204)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
         # Journal de bord : écriture (équipe technique) OU lecture (coordonnateurs
         # + Admin). Accessible à TOUS les rôles concernés -> placé AVANT les gardes
         # de rôle (qui redirigeraient Expert/Logistique vers leur seul espace).
@@ -3081,6 +3665,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Modifier une de MES entrées de journal (rôles d'écriture).
         if chemin == "/journal/modifier":
             self._journal_modifier_get(sess)
+            return
+        # Servir une pièce jointe de journal (auteur, ou lecteur dans son périmètre).
+        if chemin == "/journal/fichier":
+            self._journal_fichier_get(sess)
+            return
+        # Télécharger MON rapport de mission individuel (Word) — chacun le sien.
+        if chemin == "/journal/rapport.docx":
+            self._journal_rapport_get(sess)
             return
         # Suivi de complétude du journal (Coordonnateurs + Admin) : qui a écrit ou
         # non, par poste (par axe pour Sup. Technique / Logistique Inter-Communale).
@@ -3099,7 +3691,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         # Consignes / instructions : réception (tous rôles) + rédaction (les deux
-        # Coordonnateurs). Placé AVANT les gardes de rôle (accessible à tous).
+        # Coordonnateurs et l'Admin). Placé AVANT les gardes de rôle : l'Admin,
+        # qui est sinon renvoyé sur /admin, peut ainsi écrire ses consignes.
         if chemin == "/consignes":
             self._consignes_get(sess)
             return
@@ -3134,7 +3727,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._transcription_get(sess)           # page de transcription (dénombrement)
             return
         if chemin == "/transcription/vad":
-            self._transcription_vad_get(sess)        # VAD : pas encore disponible
+            self._transcription_vad_get(sess)        # ingestion VAD
             return
 
         # Espace LOGISTIQUE (Responsables Logistiques) : pages dédiées, réservées.
@@ -3148,14 +3741,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._traitement_get(chemin, sess)
             return
 
-        resp_courant = (sess.get("utilisateur") or {}).get("responsabilite")
-        # L'Expert survey n'a accès qu'à sa page de transcription : les pages de
-        # sélection et le dashboard (choix / suivi / vue / menu / fokontany) lui
-        # sont fermées. Toute autre route authentifiée le renvoie sur /transcription
-        # (les routes publiques et /logout sont déjà traitées plus haut).
-        if resp_courant == "Expert survey":
-            self._redirige("/transcription")
+        # DÉCLARATIONS des agents (Superviseur Technique) : choix DEN/VAD, modèle
+        # Excel, puis transcription du classeur rempli.
+        if chemin == "/declaration" or chemin.startswith("/declaration/"):
+            self._declaration_get(chemin, sess)
             return
+
+        # TABLEAU DE BORD VAD (visite à domicile) : une page par section, bornée
+        # au périmètre du rôle. Placé AVANT les gardes du dashboard dénombrement.
+        if chemin == "/vad/contours.json":
+            self._vad_contours_get(sess)         # contours de la carte VAD
+            return
+        if chemin == "/vad/rapport.xlsx":
+            self._vad_export_get(sess)           # classeur Rapport_VAD_<date>
+            return
+        if chemin == "/vad" or chemin.startswith("/vad/"):
+            self._vad_get(chemin, sess)
+            return
+
+        resp_courant = (sess.get("utilisateur") or {}).get("responsabilite")
+        # L'Expert survey a désormais accès aux DEUX tableaux de bord (dénombrement
+        # et VAD) : il transcrit les données des deux phases, il doit pouvoir
+        # vérifier ce qu'elles donnent. Son périmètre reste borné à SON district
+        # par perimetre() / _perimetre_vue, comme pour tout rôle mono-district.
+        # (Décision utilisateur du 2026-09-18 ; auparavant il était renvoyé vers
+        # /transcription depuis toute route de sélection ou de dashboard.)
         # Les Responsables Logistiques n'ont PAS accès au tableau de bord : toute
         # route de sélection/dashboard les renvoie vers leur espace logistique.
         if resp_courant in _ROLES_LOGISTIQUE:
@@ -3180,8 +3790,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._redirige("/choix")  # rien de choisi encore
                 return
             if sel.get("suivi") == "vad":
-                # Données visites à domicile pas encore disponibles.
-                self._html(page_vad_indisponible(sel))
+                # Visite à domicile : le VRAI tableau de bord VAD, borné au
+                # district choisi juste avant (mémorisé à part de `selection`,
+                # qui sert au dénombrement).
+                try:
+                    with _SESSIONS_LOCK:
+                        sess["vad_district"] = int(sel["code_district"])
+                except (KeyError, TypeError, ValueError):
+                    pass
+                self._redirige("/vad/general")
                 return
             if sel.get("suivi") == "equipe":
                 # Fiche de l'encadrement affecté au district (Coord. Nationale).
@@ -3202,7 +3819,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._redirige("/choix")
                 return
             if sel.get("suivi") == "vad":
-                self._html(page_vad_indisponible(sel))
+                self._redirige("/vad/general")   # ces vues sont le dénombrement
                 return
             parts = [p for p in chemin.split("/") if p]  # ['vue', section, level?, code?]
             section = parts[1] if len(parts) > 1 else "general"
@@ -3234,7 +3851,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._redirige("/choix")
                 return
             if sel.get("suivi") == "vad":
-                self._html(page_vad_indisponible(sel))
+                # Le classeur VAD a son propre périmètre (celui du tableau de
+                # bord VAD, pas le district de la fenêtre de sélection) : on
+                # délègue plutôt que de dupliquer la logique.
+                self._vad_export_get(sess)
                 return
             # Réutilise la logique de périmètre de /vue (district imposé + communes).
             statut, communes = self._perimetre_vue(
@@ -3250,17 +3870,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     conn, code_district, nom, communes)
             finally:
                 conn.close()
-            # Nom de fichier ASCII (Content-Disposition) : accents/espaces -> _.
-            sans_accent = "".join(
-                c for c in unicodedata.normalize("NFD", nom)
-                if unicodedata.category(c) != "Mn")
-            slug = re.sub(r"[^A-Za-z0-9]+", "_", sans_accent).strip("_") \
-                or str(code_district)
             self._octets(
                 data,
                 "application/vnd.openxmlformats-officedocument."
                 "spreadsheetml.sheet",
-                f"Rapport_RSU2026_{slug}.xlsx")
+                export_rapport.nom_fichier(code_district))
         elif chemin == "/menu":
             # Menu global commune->fokontany (hérité) : réservé aux rôles voyant
             # TOUTE la zone. Un utilisateur affecté est renvoyé sur son dashboard.
@@ -3370,6 +3984,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._journal_post()
         elif chemin == "/journal/modifier":
             self._journal_modifier_post()
+        elif chemin == "/journal/fichier/supprimer":
+            self._journal_fichier_supprimer_post()
         elif chemin == "/consignes/nouvelle":
             self._consignes_nouvelle_post()
         elif chemin == "/consignes/modifier":
@@ -3382,12 +3998,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._traiter_selection()
         elif chemin in ("/admin/utilisateurs", "/admin/import"):
             self._admin_post(chemin)
+        elif chemin == "/admin/suppression":
+            self._admin_suppression_post()
         elif chemin in ("/transcription/upload", "/transcription/transcrire"):
             self._transcription_post(chemin)
+        elif chemin in ("/transcription/vad/upload", "/transcription/vad/transcrire"):
+            self._transcription_vad_post(chemin)
+        elif chemin.startswith("/declaration/"):
+            self._declaration_post(chemin)
         elif chemin == "/traitement/equipes":
             self._traitement_equipes_post()
         elif chemin == "/traitement/prechargement":
             self._traitement_prechargement_post()
+        elif chemin == "/traitement/prechargement/annuler":
+            self._traitement_prechargement_annuler_post()
         else:
             self._html(page_erreur("Page inconnue.", 404), 404)
 
@@ -3410,6 +4034,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _json(self, obj):
+        """Réponse JSON lue par une page (fetch), pas un téléchargement.
+
+        Cache PRIVÉ d'une heure : les contours administratifs ne sont pas des
+        données nominatives et ne changent pas, mais ils dépendent du périmètre
+        de l'utilisateur — donc jamais de cache partagé."""
+        data = json.dumps(obj).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "private, max-age=3600")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _admin_get(self, chemin, sess):
         u = self._admin_ok(sess)
         if u is None:
@@ -3421,7 +4059,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     nb = len(_SESSIONS)
                 self._html(admin.page_admin(conn, u, nb))
             elif chemin == "/admin/utilisateurs":
-                self._html(admin.page_admin_utilisateurs(conn))
+                qs = urllib.parse.parse_qs(self.path.split("?", 1)[1]
+                                           if "?" in self.path else "")
+                self._html(admin.page_admin_utilisateurs(
+                    conn,
+                    filtre_district=(qs.get("district", [""])[0]).strip(),
+                    filtre_role=(qs.get("role", [""])[0]).strip(),
+                    filtre_texte=(qs.get("q", [""])[0]).strip()))
             elif chemin == "/admin/utilisateurs/ajouter":
                 self._html(admin.page_admin_ajouter(conn))
             elif chemin == "/admin/utilisateurs/modifier":
@@ -3431,6 +4075,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._html(admin.page_admin_modifier(conn, login))
             elif chemin == "/admin/journal":
                 self._html(admin.page_journal(conn))
+            elif chemin == "/admin/suppression":
+                self._html(suppression.page_suppression(conn))
             elif chemin == "/admin/modele.xlsx":
                 self._octets(admin.modele_xlsx(),
                              "application/vnd.openxmlformats-officedocument."
@@ -3441,6 +4087,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif chemin == "/admin/export/utilisateurs.csv":
                 self._octets(admin.export_utilisateurs_csv(conn),
                              "text/csv; charset=utf-8", "utilisateurs.csv")
+            elif chemin == "/admin/anomalies-zones.xlsx":
+                # Rapport d'anomalies du référentiel `zones` (31 districts), réservé
+                # à l'Admin. Fichier statique produit par anomalies_zones.py.
+                f = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "anomalies_zones_31districts.xlsx")
+                if not os.path.exists(f):
+                    self._html(page_erreur("Rapport d'anomalies introuvable sur le "
+                                           "serveur.", 404), 404)
+                else:
+                    with open(f, "rb") as fh:
+                        self._octets(fh.read(),
+                                     "application/vnd.openxmlformats-officedocument."
+                                     "spreadsheetml.sheet",
+                                     "anomalies_zones_31districts.xlsx")
             else:
                 self._html(page_erreur("Page admin inconnue.", 404), 404)
         finally:
@@ -3483,6 +4143,104 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if champ:
                 out[champ] = (nom_fichier, part.get_payload(decode=True))
         return out
+
+    def _form_multipart(self):
+        """Lit UN POST : renvoie (champs, fichiers).
+
+        `champs`   = {nom: [valeurs texte]} (comme urllib.parse.parse_qs) ;
+        `fichiers` = [(nom_du_champ, nom_fichier, octets)] pour CHAQUE fichier (un
+        même champ peut en porter plusieurs, ex. <input multiple>).
+
+        Gère aussi un corps urlencodé (pas de fichiers alors). Ne lit le corps
+        qu'UNE fois (à appeler à la place de _corps_formulaire quand il peut y avoir
+        des fichiers)."""
+        ctype = self.headers.get("Content-Type", "")
+        longueur = int(self.headers.get("Content-Length") or 0)
+        corps = self.rfile.read(longueur) if longueur else b""
+        if "multipart/form-data" not in ctype:
+            champs = urllib.parse.parse_qs(corps.decode("utf-8")) if corps else {}
+            return champs, []
+        msg = email.message_from_bytes(
+            b"Content-Type: " + ctype.encode() + b"\r\nMIME-Version: 1.0\r\n\r\n" + corps)
+        champs, fichiers = {}, []
+        for part in msg.walk():
+            if part.is_multipart():
+                continue
+            nom = part.get_param("name", header="content-disposition")
+            if not nom:
+                continue
+            nom_fichier = part.get_filename()
+            if nom_fichier is not None:
+                data = part.get_payload(decode=True) or b""
+                if data:                       # ignorer un champ fichier laissé vide
+                    fichiers.append((nom, nom_fichier, data))
+            else:
+                val = part.get_payload(decode=True) or b""
+                champs.setdefault(nom, []).append(val.decode("utf-8", "replace"))
+        return champs, fichiers
+
+    def _effacer_fichier_journal(self, f) -> bool:
+        """Efface du DISQUE le fichier d'une pièce jointe déjà retirée de la base.
+        Garde anti-traversée : on n'efface que sous les deux dossiers prévus."""
+        if not f:
+            return False
+        chemin = os.path.normpath(os.path.join(config.BASE, f.get("chemin") or ""))
+        if not (_sous_dossier(config.RAPPORT_IMAGES_DIR, chemin)
+                or _sous_dossier(config.RAPPORT_FICHIER_DIR, chemin)):
+            return False
+        try:
+            os.remove(chemin)
+        except OSError:
+            return False
+        return True
+
+    def _supprimer_fichiers_journal(self, conn, ids, login) -> int:
+        """Retire des pièces jointes (base + disque), une par une, en ne touchant
+        QUE celles de `login` (contrôle dans journal.supprimer_fichier). Renvoie le
+        nombre effectivement retiré."""
+        n = 0
+        for fid in ids:
+            fid = (fid or "").strip()
+            if not fid:
+                continue
+            f = journal.supprimer_fichier(conn, fid, login)   # None si pas à moi
+            if f:
+                self._effacer_fichier_journal(f)
+                n += 1
+        return n
+
+    def _stocker_fichiers_journal(self, conn, activite_id, login, code_district,
+                                  fichiers):
+        """Range les pièces jointes d'une entrée de journal sur le disque et les
+        enregistre, en sous-dossiers par district PUIS par login :
+        config.RAPPORT_IMAGES_DIR/<district>/<login>/ pour les images,
+        config.RAPPORT_FICHIER_DIR/<district>/<login>/ pour les autres fichiers.
+        Renvoie le nombre stocké."""
+        dist = _dossier_district(code_district)
+        ulog = _dossier_login(login)
+        n = 0
+        for _champ, nom, data in fichiers:
+            if not data or len(data) > _TAILLE_MAX_FICHIER:
+                continue                       # vide ou trop gros -> ignoré
+            categorie = _categorie_fichier(nom)
+            racine = (config.RAPPORT_IMAGES_DIR if categorie == "image"
+                      else config.RAPPORT_FICHIER_DIR)
+            dossier = os.path.join(racine, dist, ulog)
+            base = _nom_sur(nom)
+            # Préfixe unique (horodatage lisible + jeton) -> pas d'écrasement.
+            cible = os.path.join(
+                dossier, time.strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(4)
+                + "_" + base)
+            if not _sous_dossier(dossier, cible):     # garde anti-traversée
+                continue
+            os.makedirs(dossier, exist_ok=True)
+            with open(cible, "wb") as f:
+                f.write(data)
+            chemin_rel = os.path.relpath(cible, config.BASE)
+            journal.ajouter_fichier(conn, activite_id, login, dist, categorie,
+                                    base, chemin_rel, len(data))
+            n += 1
+        return n
 
     # -----------------------------------------------------------------------
     # Espace EXPERT SURVEY : téléversement des .dta + transcription
@@ -3631,6 +4389,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 districts_eff = districts
                 perim_label = "Tous mes districts" if districts else "Tous les districts"
             rapport = rapport_mission.synthese_locale(conn, debut, fin, districts_eff)
+            # Pièces justificatives (photos/documents joints) de la période : analysées
+            # par l'IA et reprises en annexe. Numérotation figée ici (même liste pour
+            # l'étape Word). Les octets sont relus depuis le disque au fil du flux.
+            pieces = rapport_mission.pieces_jointes(conn, rapport)
         finally:
             conn.close()
         # Réponse EN FLUX : on envoie l'en-tête tout de suite, puis des « heartbeats »
@@ -3652,7 +4414,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             _ecrire(rapport_mission.ia_stream_entete(rapport, perim_label, retour))
             morceaux = []
-            for bout in rapport_mission.synthese_ia_iter(rapport, perim_label):
+            for bout in rapport_mission.synthese_ia_iter(rapport, perim_label, pieces):
                 morceaux.append(bout)
                 w.write(b"<!-- . -->")   # heartbeat : garde la connexion active
                 w.flush()
@@ -3712,10 +4474,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Recompose les stats/graphiques depuis la base (rapide, local, périmètre
             # respecté) — le TEXTE, lui, vient du Markdown reçu.
             rapport = rapport_mission.synthese_locale(conn, debut, fin, districts_eff)
+            # Mêmes pièces (mêmes numéros « Pièce n°K ») que celles vues par l'IA :
+            # images embarquées en annexe illustrée du Word.
+            pieces = rapport_mission.pieces_jointes(conn, rapport)
+            # Présentation de l'équipe (tableau nominatif, borné au périmètre).
+            equipe = rapport_mission.equipe(conn, districts_eff)
         finally:
             conn.close()
         try:
-            data = rapport_word.construire_docx(markdown, rapport, perim_label)
+            data = rapport_word.construire_docx(markdown, rapport, perim_label,
+                                                pieces, equipe)
         except Exception as e:
             print(f"[app] erreur génération Word rapport de mission : {e}")
             self._html(rapport_mission.page_ia_erreur(
@@ -3737,14 +4505,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             ok = q.get("ok", [""])[0] == "1"
             maj = q.get("maj", [""])[0] == "1"
+
+            def _n(cle):
+                v = q.get(cle, ["0"])[0]
+                return int(v) if v.isdigit() else 0
+            n_sup, n_add = _n("sup"), _n("add")
             conn = db_source.connect()
             try:
                 zone, _codes = _journal_zone(conn, u)
-                mes = journal.mes_activites(conn, login)
+                mes = _attacher_fichiers(conn, journal.mes_activites(conn, login))
             finally:
                 conn.close()
+            # Détail des pièces jointes : sans lui, un retrait ou un ajout passerait
+            # inaperçu et l'utilisateur rouvrirait l'entrée pour vérifier.
+            detail = ""
+            if maj and (n_sup or n_add):
+                bouts = []
+                if n_add:
+                    bouts.append(f"{n_add} pièce(s) jointe(s) ajoutée(s)")
+                if n_sup:
+                    bouts.append(f"{n_sup} retirée(s)")
+                detail = " — " + ", ".join(bouts) + "."
             msg = ("Votre journal du jour a bien été enregistré." if ok
-                   else "Votre entrée de journal a bien été modifiée." if maj
+                   else ("Votre entrée de journal a bien été modifiée" + detail
+                         if detail else
+                         "Votre entrée de journal a bien été modifiée.") if maj
                    else "")
             self._html(page_journal_ecrire(
                 u, zone, _codes, journal.aujourdhui(), mes, message=msg))
@@ -3793,6 +4578,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     fonction=filtres["fonction"] or None,
                     zone=(zone_f if axe_actif else None) or None,
                     nom=filtres["nom"] or None)
+                _attacher_fichiers(conn, entrees)
             finally:
                 conn.close()
             portee = ("Vous consultez tous les journaux de bord des équipes."
@@ -3819,10 +4605,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         conn = db_source.connect()
         try:
             toutes = journal.mes_activites(conn, login, limite=1000000)
+            entrees = ([e for e in toutes if e.get("date_jour") == date_f]
+                       if date_f else toutes)
+            _attacher_fichiers(conn, entrees)
         finally:
             conn.close()
-        entrees = ([e for e in toutes if e.get("date_jour") == date_f]
-                   if date_f else toutes)
         self._html(page_journal_historique(u, entrees, date_f, total=len(toutes)))
 
     def _journal_modifier_get(self, sess):
@@ -3839,6 +4626,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         conn = db_source.connect()
         try:
             e = journal.obtenir_activite(conn, cid, login)
+            if e:
+                e["fichiers"] = journal.fichiers_par_activite(
+                    conn, [cid]).get(cid, [])
         finally:
             conn.close()
         if not e:
@@ -3860,9 +4650,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                    403), 403)
             return
         login = sess.get("login") or u.get("login")
-        c = self._corps_formulaire()
+        c, fichiers = self._form_multipart()
         cid = (c.get("id", [""])[0] or "").strip()
         texte = (c.get("journal", [""])[0] or "").strip()
+        # Pièces jointes cochées « Retirer » (cases du formulaire de modification).
+        a_retirer = [x for x in c.get("supprimer", []) if (x or "").strip()]
         date_jour = (c.get("date_jour", [""])[0] or "").strip() or journal.aujourdhui()
         if date_jour > journal.aujourdhui():
             date_jour = journal.aujourdhui()
@@ -3874,13 +4666,126 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             if not texte:
                 e["date_jour"] = date_jour     # conserver la saisie
+                e["fichiers"] = journal.fichiers_par_activite(conn, [cid]).get(cid, [])
                 self._html(page_journal_modifier(
                     u, e, erreur="Le journal ne peut pas être vide."))
                 return
             journal.modifier_activite(conn, cid, login, date_jour, texte)
+            # RETRAITS d'abord, AJOUTS ensuite : on peut ainsi remplacer une photo
+            # par une autre du même nom dans la même validation.
+            n_sup = self._supprimer_fichiers_journal(conn, a_retirer, login)
+            # Le district de rangement vient de l'entrée elle-même (code_district).
+            n_add = (self._stocker_fichiers_journal(
+                conn, cid, login, e.get("code_district"), fichiers)
+                if fichiers else 0)
         finally:
             conn.close()
-        self._redirige("/journal?maj=1")
+        self._redirige(f"/journal?maj=1&sup={n_sup}&add={n_add}&e={cid}")
+
+    def _journal_fichier_get(self, sess):
+        """GET /journal/fichier?id= : sert une pièce jointe de journal (image inline,
+        autre fichier en téléchargement). Accès : l'AUTEUR, ou un lecteur
+        (coordonnateur / Admin) dont le périmètre couvre le district du fichier."""
+        u = (sess or {}).get("utilisateur") or {}
+        role = (u.get("responsabilite") or "").strip()
+        login = sess.get("login") or u.get("login")
+        fid = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(self.path).query).get("id", [""])[0]
+        conn = db_source.connect()
+        try:
+            f = journal.obtenir_fichier(conn, fid)
+            autorise = False
+            if f:
+                if f.get("login") == login:
+                    autorise = True
+                elif role in _ROLES_JOURNAL_LECTURE:
+                    districts = perimetre(u)[0]      # None = tout ; set = ses districts
+                    autorise = (districts is None
+                                or str(f.get("code_district"))
+                                in {str(x) for x in districts})
+        finally:
+            conn.close()
+        if not f:
+            self._html(page_erreur("Pièce jointe introuvable.", 404), 404)
+            return
+        if not autorise:
+            self._html(page_erreur("Accès non autorisé à cette pièce jointe.",
+                                   403), 403)
+            return
+        chemin = os.path.normpath(os.path.join(config.BASE, f.get("chemin") or ""))
+        # Garde : le fichier DOIT être sous l'un des deux dossiers racine.
+        if not (_sous_dossier(config.RAPPORT_IMAGES_DIR, chemin)
+                or _sous_dossier(config.RAPPORT_FICHIER_DIR, chemin)) \
+                or not os.path.isfile(chemin):
+            self._html(page_erreur("Fichier absent du serveur.", 404), 404)
+            return
+        with open(chemin, "rb") as fh:
+            data = fh.read()
+        nom = f.get("nom_fichier") or "fichier"
+        mime = mimetypes.guess_type(nom)[0] or "application/octet-stream"
+        ext = os.path.splitext(nom)[1].lower()
+        inline = f.get("categorie") == "image" and ext in _IMG_INLINE
+        disp = "inline" if inline else "attachment"
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Disposition",
+                         f'{disp}; filename="{_nom_sur(nom)}"')
+        self.send_header("Content-Length", str(len(data)))
+        # Données nominatives -> jamais mises en cache disque.
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _journal_rapport_get(self, sess):
+        """GET /journal/rapport.docx : sert le rapport de mission INDIVIDUEL (Word) de
+        l'utilisateur CONNECTÉ (chacun le sien). Les fichiers sont générés hors-ligne
+        par `rapport_mission_users` (mise à jour à la demande). Si le rapport n'existe
+        pas encore, message explicatif au lieu d'un 404 brut."""
+        u = (sess or {}).get("utilisateur") or {}
+        login = sess.get("login") or u.get("login")
+        if not login:
+            self._redirige("/login")
+            return
+        chemin = rapport_mission_users.trouver_rapport(
+            login, u.get("district_affectation"))
+        if not chemin:
+            self._html(page_erreur(
+                "Votre rapport de mission n'est pas encore disponible. Il est "
+                "compilé à partir de votre journal de bord et mis à jour "
+                "périodiquement — réessayez plus tard.", 404), 404)
+            return
+        with open(chemin, "rb") as fh:
+            data = fh.read()
+        self._octets(data, "application/vnd.openxmlformats-officedocument."
+                     "wordprocessingml.document", f"rapport_{login}.docx")
+
+    def _journal_fichier_supprimer_post(self):
+        """POST /journal/fichier/supprimer : retire UNE pièce jointe (auteur seul).
+        Efface la ligne en base ET le fichier sur le disque.
+
+        La page de modification n'utilise plus cette route (elle coche les pièces à
+        retirer et tout part avec le formulaire) ; elle reste en service comme point
+        d'entrée unitaire, et pour une page restée ouverte avant la correction."""
+        sess = _session(self)
+        if sess is None:
+            self._redirige("/login")
+            return
+        u = (sess or {}).get("utilisateur") or {}
+        role = (u.get("responsabilite") or "").strip()
+        if role not in _ROLES_JOURNAL_ECRITURE:
+            self._html(page_erreur("Action réservée à l'équipe technique.", 403), 403)
+            return
+        login = sess.get("login") or u.get("login")
+        c = self._corps_formulaire()
+        fid = (c.get("id", [""])[0] or "").strip()
+        aid = (c.get("activite_id", [""])[0] or "").strip()
+        conn = db_source.connect()
+        try:
+            self._supprimer_fichiers_journal(conn, [fid], login)
+        finally:
+            conn.close()
+        cible = ("/journal/modifier?id=" + urllib.parse.quote(aid)) if aid else "/journal"
+        self._redirige(cible)
 
     def _journal_suivi_get(self, sess):
         """GET /journal/suivi : suivi de complétude du journal (Coordonnateurs +
@@ -4000,9 +4905,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._html(page_erreur("Écriture du journal réservée à l'équipe "
                                    "technique.", 403), 403)
             return
-        longueur = int(self.headers.get("Content-Length") or 0)
-        corps = self.rfile.read(longueur).decode("utf-8") if longueur else ""
-        champs = urllib.parse.parse_qs(corps)
+        champs, fichiers = self._form_multipart()
         texte = (champs.get("journal", [""])[0] or "").strip()
         date_jour = (champs.get("date_jour", [""])[0] or "").strip() \
             or journal.aujourdhui()
@@ -4015,13 +4918,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             zone, codes = _journal_zone(conn, u)
             if not texte:
-                mes = journal.mes_activites(conn, login)
+                mes = _attacher_fichiers(conn, journal.mes_activites(conn, login))
                 self._html(page_journal_ecrire(
                     u, zone, codes, journal.aujourdhui(), mes,
-                    erreur="Le journal ne peut pas être vide."))
+                    erreur="Le journal ne peut pas être vide.",
+                    texte=champs.get("journal", [""])[0] or ""))
                 return
-            journal.ecrire_activite(conn, login, nom, role, zone, codes,
-                                    date_jour, texte)
+            aid = journal.ecrire_activite(conn, login, nom, role, zone, codes,
+                                          date_jour, texte)
+            if fichiers:
+                self._stocker_fichiers_journal(conn, aid, login, codes, fichiers)
         finally:
             conn.close()
         # Une entrée existe désormais pour aujourd'hui -> la bulle de rappel doit
@@ -4069,7 +4975,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             u, vues, est_emetteur=role in _ROLES_CONSIGNE_ENVOI, filtres=filtres))
 
     def _consignes_nouvelle_get(self, sess):
-        """GET /consignes/nouvelle : page de rédaction (Coordonnateurs seulement)."""
+        """GET /consignes/nouvelle : page de rédaction (Coordonnateurs + Admin)."""
         u = (sess or {}).get("utilisateur") or {}
         role = (u.get("responsabilite") or "").strip()
         if role not in _ROLES_CONSIGNE_ENVOI:
@@ -4136,7 +5042,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "roles_cibles": roles, "districts_cibles": dists}
 
     def _consignes_nouvelle_post(self):
-        """POST /consignes/nouvelle : enregistre une consigne (Coordonnateurs)."""
+        """POST /consignes/nouvelle : enregistre une consigne (Coordonnateurs + Admin)."""
         sess = _session(self)
         if sess is None:
             self._redirige("/login")
@@ -4144,7 +5050,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = (sess or {}).get("utilisateur") or {}
         role = (u.get("responsabilite") or "").strip()
         if role not in _ROLES_CONSIGNE_ENVOI:
-            self._html(page_erreur("Rédaction réservée aux coordonnateurs.", 403), 403)
+            self._html(page_erreur("Rédaction réservée aux coordonnateurs et à l'Admin.",
+                                    403), 403)
             return
         login = sess.get("login") or u.get("login")
         nom = (u.get("nom_prenom") or login or "").strip()
@@ -4197,7 +5104,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = (sess or {}).get("utilisateur") or {}
         role = (u.get("responsabilite") or "").strip()
         if role not in _ROLES_CONSIGNE_ENVOI:
-            self._html(page_erreur("Action réservée aux coordonnateurs.", 403), 403)
+            self._html(page_erreur(
+                "Action réservée aux coordonnateurs et à l'Admin.", 403), 403)
             return
         login = sess.get("login") or u.get("login")
         districts_perim = perimetre(u)[0]
@@ -4228,7 +5136,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = (sess or {}).get("utilisateur") or {}
         role = (u.get("responsabilite") or "").strip()
         if role not in _ROLES_CONSIGNE_ENVOI:
-            self._html(page_erreur("Action réservée aux coordonnateurs.", 403), 403)
+            self._html(page_erreur(
+                "Action réservée aux coordonnateurs et à l'Admin.", 403), 403)
             return
         cid = (self._corps_formulaire().get("id", [""])[0] or "").strip()
         login = sess.get("login") or u.get("login")
@@ -4254,8 +5163,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             par perimetre() à la validation du POST.
 
         La Visite à domicile (op=vad) est un choix À PART ENTIÈRE : elle mène au
-        /suivi qui, faute de données VAD, affiche « pas encore disponible » (le vrai
-        tableau de bord VAD sera branché plus tard)."""
+        /suivi, qui ouvre le tableau de bord VAD (/vad/general) borné au district
+        choisi juste avant."""
         if op not in ("den", "vad", "equipe"):
             self._html(page_menu_operation(role, u))
             return
@@ -4266,8 +5175,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._redirige("/equipe")       # fiche équipe de son district
                 return
             # Tableau de bord (dénombrement OU VAD) : district imposé -> on prépare
-            # la sélection et on ouvre /suivi (den -> vue générale ; vad -> page
-            # « pas encore disponible »).
+            # la sélection et on ouvre /suivi (den -> vue générale du dénombrement ;
+            # vad -> tableau de bord VAD).
             code = sorted(districts_perim)[0]
             conn = db_source.connect()
             try:
@@ -4348,8 +5257,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._html(transcription.page_choix_transcription(txt))
 
     def _transcription_vad_get(self, sess):
-        """Transcription Visite à domicile : page « pas encore disponible » (la
-        structure de base VAD n'existe pas encore)."""
+        """GET /transcription/vad : page d'ingestion des données de la VISITE À
+        DOMICILE (téléversement du dossier d'export RSUe, puis transcription)."""
         u = self._transcription_ok(sess)
         if u is None:
             return
@@ -4357,9 +5266,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         conn = db_source.connect()
         try:
             txt = self._district_txt(conn, code)
+            etat = vad_db.compter(conn, districts=[code])
+            hist = journal.transcriptions(conn, limite=20, login=u["login"],
+                                          phase=journal.PHASE_VAD)
         finally:
             conn.close()
-        self._html(transcription.page_vad_transcription(txt))
+        self._html(vad_web.page_ingestion(txt, etat=etat, historique=hist))
 
     def _transcription_get(self, sess):
         u = self._transcription_ok(sess)
@@ -4369,7 +5281,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         conn = db_source.connect()
         try:
             txt = self._district_txt(conn, code)
-            hist = journal.transcriptions(conn, limite=20, login=u["login"])
+            hist = journal.transcriptions(conn, limite=20, login=u["login"],
+                                          phase=journal.PHASE_DEN)
         finally:
             conn.close()
         self._html(transcription.page_transcription(txt, historique=hist))
@@ -4426,10 +5339,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             "Téléversement", "Échec",
                             detail="Fichiers manquants : " + ", ".join(sorted(manquants)))
                     else:
-                        # Le dossier doit concerner UNIQUEMENT le district de l'Expert
-                        # (variable `district` de DEN_MENAGE.dta).
+                        # Le dossier doit concerner le district de l'Expert. Un export
+                        # contient parfois quelques interviews saisies hors zone (essai
+                        # d'un agent, district choisi par erreur) : on ne refuse PAS tout
+                        # le téléversement pour autant — on écarte ces lignes et on
+                        # avertit. Refus seulement si RIEN ne concerne son district.
                         districts = db_source.districts_du_den(tmp)
-                        if districts != {code}:
+                        exclure = db_source.cles_hors_district(tmp, code)
+                        if code not in districts:
                             trouve = (", ".join(str(x) for x in sorted(districts))
                                       or "aucun district identifiable")
                             erreur = ("Téléversement refusé — ce dossier concerne le "
@@ -4451,13 +5368,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                     os.remove(dst)        # échoue si la cible existe)
                                 shutil.move(src, dst)
                             apercu = maj_db.maj_depuis_dossier(
-                                dossier, conn, log=lambda *a: None, dry_run=True)
+                                dossier, conn, log=lambda *a: None, dry_run=True,
+                                exclure_cles=exclure)
                             apercu["fichiers"] = recus
+                            # Lignes hors district : écartées, mais SIGNALÉES — sinon
+                            # l'Expert croirait tout transcrit et chercherait en vain
+                            # les segments manquants.
+                            apercu["ecartes"] = len(exclure)
+                            detail_ec = ""
+                            if exclure:
+                                hors = sorted(d for d in districts if d != code)
+                                apercu["ecartes_districts"] = hors
+                                detail_ec = (f" ; {len(exclure)} segment(s) écarté(s) "
+                                             "hors district ("
+                                             + ", ".join(str(x) for x in hors) + ")")
                             journal.consigner(
                                 conn, u["login"], u.get("nom_prenom", ""), code,
                                 "Téléversement", "Réussi",
                                 detail=(f"{len(recus)} fichier(s) reçu(s) : "
-                                        + ", ".join(recus)),
+                                        + ", ".join(recus) + detail_ec),
                                 fichiers=", ".join(recus))
                 finally:
                     shutil.rmtree(tmp, ignore_errors=True)
@@ -4468,8 +5397,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         conn, u["login"], u.get("nom_prenom", ""), code,
                         "Transcription", "Échec", detail="Aucun fichier téléversé")
                 else:
+                    # Même filtre qu'à l'aperçu : les segments hors district ne
+                    # doivent pas entrer en base à l'application non plus.
                     resultat = maj_db.maj_depuis_dossier(
-                        dossier, conn, log=lambda *a: None, dry_run=False)
+                        dossier, conn, log=lambda *a: None, dry_run=False,
+                        exclure_cles=db_source.cles_hors_district(dossier, code))
                     presents = ", ".join(t["table"] for t in resultat["tables"]
                                          if t["present"])
                     tot = resultat["total"]
@@ -4490,11 +5422,450 @@ class Handler(http.server.BaseHTTPRequestHandler):
             journal.consigner(conn, u["login"], u.get("nom_prenom", ""), code,
                               phase, "Échec", detail=str(e))
         finally:
-            hist = journal.transcriptions(conn, limite=20, login=u["login"])
+            hist = journal.transcriptions(conn, limite=20, login=u["login"],
+                                          phase=journal.PHASE_DEN)
             conn.close()
         self._html(transcription.page_transcription(
             txt, apercu=apercu, resultat=resultat, message=message,
             erreur=erreur, historique=hist))
+
+    # -----------------------------------------------------------------------
+    # VISITE À DOMICILE (VAD) : tableau de bord + ingestion côté Traitement
+    # -----------------------------------------------------------------------
+    def _vad_perimetre(self, u, district=None):
+        """(districts, communes, libellé) du périmètre VAD d'un utilisateur.
+
+        Même source de vérité que le dénombrement (`perimetre`) : le Superviseur
+        voit SES communes, le Régional SES districts, le National tout.
+
+        `district` = le district CHOISI sur la fenêtre de sélection (celle qui
+        propose « Dénombrement / Visite à domicile ») : il RESSERRE le périmètre
+        sur ce seul district, et n'est retenu que s'il y est bien autorisé —
+        `perimetre()` reste la source de vérité de l'accès, pas l'URL."""
+        districts, communes = perimetre(u)
+        if district is not None:
+            try:
+                code = int(district)
+            except (TypeError, ValueError):
+                code = None
+            if code is not None and (districts is None or code in districts):
+                districts = {code}
+        conn = db_source.connect()
+        try:
+            if communes:
+                noms = [zones.libelle_commune(conn, c) or str(c)
+                        for c in sorted(communes)]
+                lib = f"{len(noms)} commune(s) : " + ", ".join(noms[:6]) + (
+                    "…" if len(noms) > 6 else "")
+            elif districts:
+                noms = []
+                for d in sorted(districts):
+                    li = zones.libelles_district(conn, d)
+                    noms.append(li[2] if li else str(d))
+                lib = ("District " if len(noms) == 1 else "Districts ") + ", ".join(noms)
+            else:
+                lib = "Ensemble des districts"
+        finally:
+            conn.close()
+        return districts, communes, lib
+
+    def _vad_zone_choisie(self, conn, districts, communes, commune, fokontany):
+        """(commune, fokontany, libellé) de la descente, (None, None, "") sinon.
+
+        La zone demandée doit exister DANS le périmètre du rôle : on la cherche
+        dans `vad_db.zones_disponibles`, qui est déjà borné par ce périmètre. Un
+        code inventé ou appartenant à un autre district est donc écarté, et le
+        fokontany n'est retenu que s'il appartient à la commune choisie."""
+        if not (commune or fokontany):
+            return None, None, ""
+        zones = vad_db.zones_disponibles(conn, districts, communes)
+        if fokontany and fokontany.isdigit() and not commune:
+            # Un fokontany seul : on retrouve sa commune pour garder la cascade
+            # cohérente (le sélecteur affiche les deux niveaux).
+            for c in zones:
+                if any(f["code"] == int(fokontany) for f in c["fokontany"]):
+                    commune = str(c["code"])
+                    break
+        choisie = next((c for c in zones
+                        if commune.isdigit() and c["code"] == int(commune)), None) \
+            if commune else None
+        if choisie is None:
+            return None, None, ""
+        if fokontany and fokontany.isdigit():
+            fk = next((f for f in choisie["fokontany"]
+                       if f["code"] == int(fokontany)), None)
+            if fk:
+                return (choisie["code"], fk["code"],
+                        f'{choisie["nom"]} › {fk["nom"]}')
+        return choisie["code"], None, choisie["nom"]
+
+    def _vad_contours_get(self, sess):
+        """GET /vad/contours.json : contours du périmètre pour la CARTE VAD.
+
+        Servis à part de la page : district + communes pèsent 0,9 à 2,3 Mo bruts
+        (0,08 à 0,19 Mo une fois allégés, cf. limites_db.contours_zones), ce qui
+        alourdirait chaque section du tableau de bord alors que seule la carte
+        s'en sert. Le périmètre est celui du rôle, resserré sur le district choisi
+        — jamais une saisie de l'URL."""
+        u = (sess or {}).get("utilisateur") or {}
+        if (u.get("responsabilite") or "").strip() not in _ROLES_VAD:
+            self._json({})
+            return
+        districts, communes, _lib = self._vad_perimetre(
+            u, (sess or {}).get("vad_district"))
+        qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        prem = lambda n: (qs.get(n) or [""])[0].strip()
+        conn = db_source.connect()
+        try:
+            # Même descente que la page, validée de la même façon : le contour
+            # rouge suit le niveau affiché (district, commune ou fokontany).
+            com, fkt, _lib_zone = self._vad_zone_choisie(
+                conn, districts, communes, prem("commune"), prem("fokontany"))
+            contours = limites_db.contours_zones(conn, districts, communes,
+                                                 commune=com, fokontany=fkt)
+        except Exception:
+            contours = {"niveau": "district", "principal": {}, "sous": {}}
+        finally:
+            conn.close()
+        self._json(contours)
+
+    def _vad_get(self, chemin, sess):
+        """GET /vad[/<section>] : une section du tableau de bord VAD."""
+        u = (sess or {}).get("utilisateur") or {}
+        role = (u.get("responsabilite") or "").strip()
+        if role not in _ROLES_VAD:
+            self._redirige(accueil_role(role))
+            return
+        section = chemin[len("/vad/"):].strip("/") if chemin.startswith("/vad/") else ""
+        section = section or "general"
+        if section not in vad_web.IDS:
+            self._html(page_erreur("Section VAD inconnue.", 404), 404)
+            return
+        qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        prem = lambda n: (qs.get(n) or [""])[0].strip()
+        # DISTRICT CHOISI (fenêtre de sélection). Mémorisé dans la session, à part
+        # de `selection` qui sert au dénombrement, pour que la navigation entre
+        # sections le garde. `?district=tout` revient à tout le périmètre du rôle.
+        dis = prem("district")
+        if dis:
+            # Un district non autorisé n'est pas mémorisé du tout (sinon la session
+            # garderait un code inutile) : perimetre() reste la source de vérité.
+            autorises = perimetre(u)[0]
+            with _SESSIONS_LOCK:
+                if dis.isdigit() and (autorises is None or int(dis) in autorises):
+                    sess["vad_district"] = int(dis)
+                else:
+                    sess.pop("vad_district", None)
+        districts, communes, lib = self._vad_perimetre(
+            u, (sess or {}).get("vad_district"))
+        # Section « qualité » : l'agent testé est choisi par l'URL, pour que le
+        # serveur ne calcule que lui (cf. vad_qualite.calculer).
+        cible = None
+        if section == "qualite" and prem("commune") and prem("ce") and prem("ae"):
+            cible = (prem("commune"), prem("ce"), prem("ae"))
+        conn = db_source.connect()
+        try:
+            if not vad_db.tables_presentes(conn):
+                self._html(page_vad_vide(role))
+                return
+            # CARTE : descente commune -> fokontany, VALIDÉE contre les zones du
+            # périmètre (une commune saisie dans l'URL hors affectation est
+            # ignorée — perimetre() reste la source de vérité de l'accès).
+            com = fkt = None
+            if section == "gps":
+                com, fkt, zone_lib = self._vad_zone_choisie(
+                    conn, districts, communes, prem("commune"), prem("fokontany"))
+                # La portée affichée (en-tête + barre latérale) suit la descente,
+                # sinon la page annoncerait « District X » sous des compteurs qui
+                # ne décrivent qu'un fokontany.
+                if zone_lib:
+                    lib = f"{lib} › {zone_lib}"
+            agg = vad_core.agrege(conn, districts, communes, portee_lib=lib,
+                                  section=section, cible=cible,
+                                  commune=com, fokontany=fkt)
+            # « Par agent » : `?agent=<code>` ouvre la liste des ménages
+            # affectés à cet agent et pas encore interviewés. Le code n'est
+            # qu'un filtre d'affichage sur un calcul déjà borné au périmètre.
+            if section == "agents":
+                agg["agentSel"] = prem("agent")
+        finally:
+            conn.close()
+        self._html(vad_web.page(section, agg, lib, retour=accueil_role(role),
+                                liens_zone=_vad_liens_zone(role, u, section,
+                                                           (sess or {}).get("vad_district"))),
+                   prefixer=False)          # liens déjà préfixés à la source
+
+    def _vad_export_get(self, sess):
+        """GET /vad/rapport.xlsx : le classeur « Rapport_VAD_<district>_<AAAAMMJJ>_<HHMM> ».
+
+        Même périmètre que les pages du tableau de bord — `_vad_perimetre` est
+        la source de vérité de l'accès, jamais l'URL —, et les six feuilles
+        attendues : Global, Erreur ménage, Erreur Individu, les deux volets du
+        test de qualité, puis l'écart déclaration-serveur par agent."""
+        u = (sess or {}).get("utilisateur")
+        if not u:
+            self._redirige("/")
+            return
+        districts, communes, lib = self._vad_perimetre(
+            u, (sess or {}).get("vad_district"))
+        conn = db_source.connect()
+        try:
+            if not vad_db.tables_presentes(conn):
+                self._redirige("/vad/general")
+                return
+            data = export_vad.generer_bytes(conn, districts, communes, lib)
+        finally:
+            conn.close()
+        self._octets(
+            data,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            export_vad.nom_fichier(districts))
+
+    def _transcription_vad_post(self, chemin):
+        """POST /transcription/vad/{upload,transcrire} : ingestion des données VAD.
+
+        C'est l'EXPERT SURVEY qui ingère les données du terrain — dénombrement ET
+        visite à domicile. Deux temps, comme pour le dénombrement : on téléverse et
+        on VÉRIFIE (rien n'entre en base), puis on transcrit une fois l'aperçu lu."""
+        sess = _session(self)
+        if sess is None:
+            self._redirige("/login")
+            return
+        u = self._transcription_ok(sess)
+        if u is None:
+            return
+        code = u.get("district_affectation")
+        if not code:
+            self._html(page_erreur("Aucun district d'affectation.", 400), 400)
+            return
+        code = int(code)
+        dossier = os.path.join(config.UPLOAD_DIR, "VAD", str(code))
+        apercu = resultat = message = erreur = None
+        conn = db_source.connect()
+        try:
+            txt = self._district_txt(conn, code)
+            if chemin == "/transcription/vad/upload":
+                # Écriture dans un TEMPORAIRE, validation, puis déplacement : aucun
+                # fichier douteux ne reste dans le dossier réel.
+                tmp = tempfile.mkdtemp(prefix="rsu_vad_")
+                try:
+                    recus = []
+                    for nom, data in self._upload_fichiers():
+                        rel = _relpath_upload(nom)
+                        if not rel or not data:
+                            continue
+                        dst = os.path.join(tmp, *rel.split("/"))
+                        if not _sous_dossier(tmp, dst):
+                            continue
+                        os.makedirs(os.path.dirname(dst) or tmp, exist_ok=True)
+                        with open(dst, "wb") as f:
+                            f.write(data)
+                        recus.append(rel)
+                    f_vad = vad_db.trouver_fichiers(tmp)
+                    if not f_vad["menage"]:
+                        erreur = ("Téléversement refusé — aucun fichier de "
+                                  "<b>ménages VAD</b> dans ce dossier. Attendu : "
+                                  "<code>rsuefkt_…_pil.dta</code> (ou un .dta portant "
+                                  "les colonnes interview__key, CQ7, CQ9, nbmembre).")
+                        # Un refus se consigne comme un succès (c'est ce que fait
+                        # déjà le dénombrement) : sans cela, l'Expert voit un
+                        # bandeau rouge et l'historique reste muet.
+                        journal.consigner(
+                            conn, u["login"], u.get("nom_prenom", ""), code,
+                            "Téléversement VAD", "Échec",
+                            detail="Fichier des ménages VAD absent du dossier",
+                            fichiers=", ".join(sorted(recus)[:20]))
+                    else:
+                        districts = vad_db.districts_du_dossier(tmp)
+                        exclure = vad_db.cles_hors_district(tmp, code)
+                        if code not in districts:
+                            trouve = (", ".join(str(x) for x in sorted(districts))
+                                      or "aucun district identifiable")
+                            erreur = ("Téléversement refusé — ce dossier concerne le "
+                                      f"district <b>{trouve}</b>, alors que vous êtes "
+                                      f"affecté au district <b>{code}</b>.")
+                            journal.consigner(
+                                conn, u["login"], u.get("nom_prenom", ""), code,
+                                "Téléversement VAD", "Échec",
+                                detail=f"District {trouve} au lieu de {code}",
+                                fichiers=", ".join(sorted(recus)[:20]))
+                        else:
+                            os.makedirs(dossier, exist_ok=True)
+                            for rel in recus:
+                                src = os.path.join(tmp, *rel.split("/"))
+                                dst = os.path.join(dossier, *rel.split("/"))
+                                os.makedirs(os.path.dirname(dst) or dossier,
+                                            exist_ok=True)
+                                if os.path.exists(dst):
+                                    os.remove(dst)
+                                shutil.move(src, dst)
+                            apercu = vad_db.apercu(dossier)
+                            apercu["ecartes"] = len(exclure)
+                            message = ("Dossier reçu et vérifié. Relisez l'aperçu, "
+                                       "puis lancez la transcription.")
+                            journal.consigner(
+                                conn, u["login"], u.get("nom_prenom", ""), code,
+                                "Téléversement VAD", "Réussi",
+                                detail=f"{len(recus)} fichier(s) reçus",
+                                fichiers=", ".join(sorted(recus)[:20]))
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+            else:                              # /transcription/vad/transcrire
+                try:
+                    exclure = vad_db.cles_hors_district(dossier, code)
+                    resultat = vad_db.transcrire(conn, dossier,
+                                                 log=lambda *a: None,
+                                                 exclure_cles=exclure)
+                    t = resultat["total"]
+                    message = (f"Transcription VAD terminée : +{t['ajoutes']} ligne(s) "
+                               f"ajoutée(s), ~{t['modifies']} mise(s) à jour, "
+                               f"={t['inchanges']} inchangée(s).")
+                    _vider_cache()
+                    journal.consigner(
+                        conn, u["login"], u.get("nom_prenom", ""), code,
+                        "Transcription VAD", "Réussi", detail=message,
+                        ajoutes=t["ajoutes"], modifies=t["modifies"],
+                        inchanges=t["inchanges"])
+                except vad_db.ErreurVAD as e:
+                    erreur = htmllib.escape(str(e))
+                    journal.consigner(
+                        conn, u["login"], u.get("nom_prenom", ""), code,
+                        "Transcription VAD", "Échec", detail=str(e)[:300])
+            etat = vad_db.compter(conn, districts=[code])
+            hist = journal.transcriptions(conn, limite=20, login=u["login"],
+                                          phase=journal.PHASE_VAD)
+            page = vad_web.page_ingestion(txt, etat=etat, apercu=apercu,
+                                          resultat=resultat, message=message,
+                                          erreur=erreur, historique=hist)
+        finally:
+            conn.close()
+        self._html(page)
+
+    # -----------------------------------------------------------------------
+    # DÉCLARATIONS des agents (Superviseur Technique)
+    # -----------------------------------------------------------------------
+    # Ce que l'agent DIT avoir fait (nombre de ménages dénombrés / interviewés par
+    # jour), saisi par son Superviseur Technique depuis un modèle Excel. Le rapport
+    # Excel du dashboard confronte ensuite déclaration et données reçues au serveur.
+    def _declaration_ok(self, sess):
+        """Renvoie l'utilisateur si rôle « Superviseur Technique », sinon 403."""
+        u = (sess or {}).get("utilisateur") or {}
+        if u.get("responsabilite") in _ROLES_DECLARATION:
+            return u
+        self._html(page_erreur(
+            "Accès réservé aux Superviseurs Techniques.", 403), 403)
+        return None
+
+    def _declaration_contexte(self, conn, u, top=None):
+        """(district_txt, districts, communes, codes_agents) du superviseur.
+
+        Le périmètre vient de perimetre() — SOURCE DE VÉRITÉ de l'accès — et borne
+        aussi bien le modèle Excel proposé que les codes agent acceptés à l'import.
+
+        `top` : la PHASE déclarée ('DEN' / 'VAD'). Les agents acceptés ne sont
+        pas les mêmes — la visite à domicile a les siens, dont certains n'ont
+        jamais dénombré. Sans `top` (page de choix), l'union des deux."""
+        districts, communes = perimetre(u)
+        code = u.get("district_affectation")
+        district_txt = self._district_txt(conn, int(code)) if code else "—"
+        codes = declarations.codes_perimetre(conn, districts, communes, top)
+        return district_txt, districts, communes, codes
+
+    def _declaration_get(self, chemin, sess):
+        u = self._declaration_ok(sess)
+        if u is None:
+            return
+        conn = db_source.connect()
+        try:
+            district_txt, districts, communes, codes = \
+                self._declaration_contexte(conn, u)
+            if chemin == "/declaration":
+                compteurs = {t: declarations.compter(conn, t, codes=codes)
+                             for t in ("DEN", "VAD")}
+                self._html(declarations.page_choix(district_txt, compteurs))
+                return
+            reste = chemin[len("/declaration/"):].strip("/")
+            if reste.startswith("modele/") and reste.endswith(".xlsx"):
+                cle = reste[len("modele/"):-len(".xlsx")]
+                if cle not in declarations.OPERATIONS:
+                    self._html(page_erreur("Opération inconnue.", 404), 404)
+                    return
+                top = declarations.OPERATIONS[cle][0]
+                self._octets(
+                    declarations.modele_xlsx(conn, top, districts, communes),
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet",
+                    f"modele_declaration_{cle}.xlsx")
+                return
+            if reste in declarations.OPERATIONS:
+                codes = declarations.codes_perimetre(
+                    conn, districts, communes,
+                    declarations.OPERATIONS[reste][0])
+                self._html(declarations.page_declaration(
+                    conn, reste, district_txt, codes_perim=codes))
+                return
+            self._html(page_erreur("Page de déclaration inconnue.", 404), 404)
+        finally:
+            conn.close()
+
+    def _declaration_post(self, chemin):
+        """Transcription du classeur de déclarations vers `declaration_agent`."""
+        sess = _session(self)
+        if sess is None:
+            self._redirige("/login")
+            return
+        u = self._declaration_ok(sess)
+        if u is None:
+            return
+        cle = chemin[len("/declaration/"):].strip("/")
+        if cle not in declarations.OPERATIONS:
+            self._html(page_erreur("Opération inconnue.", 404), 404)
+            return
+        top = declarations.OPERATIONS[cle][0]
+        nom_fichier, data = self._upload_fichier()
+        conn = db_source.connect()
+        resultat = message = erreur = None
+        tmp = tempfile.mkdtemp(prefix="rsu_declaration_")
+        try:
+            district_txt, _d, _c, codes = self._declaration_contexte(
+                conn, u, top)
+            if not data:
+                erreur = ("Aucun classeur Excel reçu : indiquez le chemin du "
+                          "fichier des déclarations.")
+            elif not codes:
+                erreur = ("Aucun agent n'est encore rattaché à votre périmètre "
+                          "(aucune donnée reçue au serveur) : la déclaration "
+                          "ne peut pas être rattachée à un agent.")
+            else:
+                p_xlsx = os.path.join(tmp, "declaration.xlsx")
+                with open(p_xlsx, "wb") as f:
+                    f.write(data)
+                try:
+                    resultat = declarations.transcrire(
+                        conn, p_xlsx, top, codes_autorises=codes)
+                    b = resultat["bilan"]
+                    message = (
+                        f"Transcription terminée : +{b['ajoutes']} déclaration(s) "
+                        f"ajoutée(s), ~{b['modifies']} mise(s) à jour, "
+                        f"={b['inchanges']} inchangée(s) — {resultat['agents']} "
+                        f"agent(s), {resultat['total']} "
+                        f"{declarations.unite(top)} déclarés.")
+                    # La page « Par agent » du tableau de bord affiche l'écart
+                    # déclaration <-> serveur : elle est en cache, il faut la
+                    # régénérer avec les déclarations qui viennent d'arriver.
+                    _vider_cache()
+                except ValueError as e:          # classeur inexploitable
+                    erreur = htmllib.escape(str(e))
+                except Exception as e:           # openpyxl : fichier non .xlsx…
+                    erreur = ("Impossible de lire ce classeur Excel : "
+                              + htmllib.escape(str(e)))
+            page = declarations.page_declaration(
+                conn, cle, district_txt, codes_perim=codes,
+                resultat=resultat, message=message, erreur=erreur)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+            conn.close()
+        self._html(page)
 
     # -----------------------------------------------------------------------
     # Espace TRAITEMENT : base des Chefs d'Équipe et des Agents
@@ -4520,7 +5891,42 @@ class Handler(http.server.BaseHTTPRequestHandler):
             elif chemin == "/traitement/equipes":
                 self._html(equipes.page_equipes(conn, txt))
             elif chemin == "/traitement/prechargement":
-                self._html(prechargement.page_prechargement(txt))
+                q = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(self.path).query)
+                lot_ok = None
+                if code and q.get("lot"):
+                    lot_ok = prechargement.lot(conn, int(code), q["lot"][0])
+                message = ("Le lot a été annulé : ses ménages sont de nouveau "
+                           "« à précharger »." if q.get("annule") else None)
+                self._html(prechargement.page_prechargement(
+                    conn, txt, code_district=code, lot_ok=lot_ok,
+                    message=message, format_ok=(q.get("fmt") or ["code"])[0]))
+            elif chemin == "/traitement/prechargement/lot":
+                q = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(self.path).query)
+                fmt = (q.get("fmt") or ["code"])[0]
+                res = (prechargement.zip_lot(conn, int(code),
+                                             (q.get("id") or [""])[0], format_geo=fmt)
+                       if code else None)
+                if res is None:
+                    self._html(page_erreur("Lot introuvable pour votre district.",
+                                           404), 404)
+                else:
+                    self._octets(res[1], "application/zip", res[0])
+            elif chemin == "/traitement/prechargement/total.xlsx":
+                q = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(self.path).query)
+                fmt = (q.get("fmt") or ["code"])[0]
+                try:
+                    nom, octets = prechargement.xlsx_total(conn, int(code or 0),
+                                                           format_geo=fmt)
+                except rapport_core.ErreurDonnees as e:
+                    self._html(prechargement.page_prechargement(
+                        conn, txt, code_district=code,
+                        erreur=htmllib.escape(str(e))))
+                    return
+                self._octets(octets, "application/vnd.openxmlformats-officedocument."
+                             "spreadsheetml.sheet", nom)
             elif chemin == "/traitement/modele/chef.xlsx":
                 self._octets(equipes.modele_chef_xlsx(),
                              "application/vnd.openxmlformats-officedocument."
@@ -4578,8 +5984,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._html(page)
 
     def _traitement_prechargement_post(self):
-        """Génère la base de préchargement + la charge par agent -> ZIP en
-        téléchargement. Rôle Traitement uniquement ; district = affectation."""
+        """Génère UN lot de préchargement (fokontany choisis, mode d'affectation),
+        l'inscrit au registre, puis redirige vers la page qui lance le
+        téléchargement du ZIP (PRG : un rafraîchissement ne régénère pas de lot).
+        Rôle Traitement uniquement ; district = affectation."""
         sess = _session(self)
         if sess is None:
             self._redirige("/login")
@@ -4587,28 +5995,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = self._traitement_ok(sess)
         if u is None:
             return
-        # Parse multipart : champ texte « mode » + fichiers « exclure » (0..n).
-        ctype = self.headers.get("Content-Type", "")
-        longueur = int(self.headers.get("Content-Length") or 0)
-        corps = self.rfile.read(longueur) if longueur else b""
-        mode = "denombrement"
-        exclure = []
-        if "multipart/form-data" in ctype:
-            msg = email.message_from_bytes(
-                b"Content-Type: " + ctype.encode()
-                + b"\r\nMIME-Version: 1.0\r\n\r\n" + corps)
-            for part in msg.walk():
-                champ = part.get_param("name", header="content-disposition")
-                fichier = part.get_filename()
-                if fichier:
-                    if champ == "exclure":
-                        octets = part.get_payload(decode=True)
-                        if octets:
-                            exclure.append((fichier, octets))
-                elif champ == "mode":
-                    val = part.get_payload(decode=True)
-                    if val:
-                        mode = val.decode("utf-8", "replace").strip()
+        champs, _fichiers = self._form_multipart()
+        mode = (champs.get("mode") or ["denombrement"])[0]
+        fmt = (champs.get("format_geo") or ["code"])[0]
+        portee = (champs.get("portee") or ["tous"])[0]
+        fkt = (champs.get("fokontany") or []) if portee == "choix" else []
 
         conn = db_source.connect()
         try:
@@ -4616,19 +6007,53 @@ class Handler(http.server.BaseHTTPRequestHandler):
             txt = self._district_txt(conn, code) if code else "—"
             if not code:
                 self._html(prechargement.page_prechargement(
-                    txt, erreur="Aucun district d'affectation : impossible de "
-                                "générer la base de préchargement."))
+                    conn, txt, erreur="Aucun district d'affectation : impossible "
+                                      "de générer la base de préchargement."))
+                return
+            if portee == "choix" and not fkt:
+                self._html(prechargement.page_prechargement(
+                    conn, txt, code_district=code,
+                    erreur="Cochez au moins un fokontany, ou choisissez "
+                           "« Tous les fokontany »."))
                 return
             try:
-                nom_zip, octets_zip = prechargement.generer_zip(
-                    conn, int(code), mode=mode, exclure_fichiers=exclure)
+                x = prechargement.generer_lot(conn, int(code), mode=mode,
+                                              fokontany=fkt, utilisateur=u)
             except rapport_core.ErreurDonnees as e:
                 self._html(prechargement.page_prechargement(
-                    txt, erreur=htmllib.escape(str(e))))
+                    conn, txt, code_district=code, choisis=fkt,
+                    erreur=htmllib.escape(str(e)).replace("\n", "<br>")))
                 return
         finally:
             conn.close()
-        self._octets(octets_zip, "application/zip", nom_zip)
+        self._redirige("/traitement/prechargement?lot="
+                       + urllib.parse.quote(x["lot_id"])
+                       + "&fmt=" + urllib.parse.quote(fmt))
+
+    def _traitement_prechargement_annuler_post(self):
+        """Annule le DERNIER lot du district (ses ménages redeviennent à précharger)."""
+        sess = _session(self)
+        if sess is None:
+            self._redirige("/login")
+            return
+        u = self._traitement_ok(sess)
+        if u is None:
+            return
+        champs, _fichiers = self._form_multipart()
+        lot_id = (champs.get("lot") or [""])[0]
+        conn = db_source.connect()
+        try:
+            code = u.get("district_affectation")
+            txt = self._district_txt(conn, code) if code else "—"
+            try:
+                prechargement.annuler_dernier_lot(conn, int(code or 0), lot_id)
+            except rapport_core.ErreurDonnees as e:
+                self._html(prechargement.page_prechargement(
+                    conn, txt, code_district=code, erreur=htmllib.escape(str(e))))
+                return
+        finally:
+            conn.close()
+        self._redirige("/traitement/prechargement?annule=1")
 
     def _admin_post(self, chemin):
         sess = _session(self)
@@ -4658,6 +6083,65 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         conn, message=message, erreur=erreur)
         finally:
             conn.close()
+        self._html(page)
+
+    def _admin_suppression_post(self):
+        """POST /admin/suppression — la suppression des données d'UN district.
+
+        DEUX temps, parce que c'est irréversible :
+          action=verifier  -> page de CONFIRMATION (décompte exact, table par table) ;
+          action=confirmer -> suppression effective, APRÈS que l'Admin a retapé le
+                              nom du district.
+        Puis journalisation (visible dans les journaux d'ingestion de /admin) et
+        purge du cache des rapports : une page déjà en cache montrerait encore les
+        données effacées."""
+        sess = _session(self)
+        if sess is None:
+            self._redirige("/login")
+            return
+        u = self._admin_ok(sess)
+        if u is None:
+            return
+        c = self._corps_formulaire()
+        g = lambda k: (c.get(k, [""])[0] or "").strip()
+        action, brut = g("action"), g("district")
+        ops = suppression.normaliser(c.get("operation", []))
+        conn = db_source.connect()
+        try:
+            if not brut.isdigit() or not zones.libelles_district(conn, int(brut)):
+                self._html(suppression.page_suppression(
+                    conn, erreur="Choisissez un district.", coches=ops))
+                return
+            code = int(brut)
+            if not ops:
+                self._html(suppression.page_suppression(
+                    conn, erreur="Choisissez au moins un type de données : "
+                                 "Dénombrement et/ou Visite à domicile.",
+                    code_pre=code))
+                return
+            district_txt = self._district_txt(conn, code)
+            if action == "verifier":
+                self._html(suppression.page_confirmation(
+                    conn, code, ops, district_txt))
+                return
+            if action != "confirmer":
+                self._html(page_erreur("Action de suppression inconnue.", 400), 400)
+                return
+            # Garde-fou final : le nom du district, retapé à la main.
+            if not suppression.confirmation_ok(
+                    g("confirmation"), district_txt.split(" (")[0]):
+                self._html(suppression.page_confirmation(
+                    conn, code, ops, district_txt,
+                    erreur="Le nom du district saisi ne correspond pas : "
+                           "rien n’a été supprimé."))
+                return
+            resultats = suppression.supprimer(conn, code, ops)
+            suppression.consigner(conn, u, code, resultats)
+            page = suppression.page_suppression(
+                conn, message=suppression.resume_html(district_txt, resultats))
+        finally:
+            conn.close()
+        _vider_cache()
         self._html(page)
 
     def _affectation_kw(self, c, resp):
@@ -4771,8 +6255,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u:
                 jeton = secrets.token_hex(16)
                 with _SESSIONS_LOCK:
+                    # `_consignes_modale` : la 1re page HTML servie ouvrira la
+                    # fenêtre des consignes non lues (cf. modale_consignes).
                     _SESSIONS[jeton] = {"login": u["login"], "selection": None,
-                                        "utilisateur": u, "jeton": jeton}
+                                        "utilisateur": u, "jeton": jeton,
+                                        "_consignes_modale": True}
                 journal.ouvrir(conn, jeton, u["login"], u.get("nom_prenom", ""),
                                u.get("responsabilite", ""), ip)
             else:
@@ -4904,11 +6391,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._redirige("/login")
             return
         u = sess.get("utilisateur") or {}
-        # Expert survey / Responsables Logistiques : pas d'accès à la sélection
-        # (dashboard fermé) -> renvoi sur leur espace, comme côté GET.
-        if u.get("responsabilite") == "Expert survey":
-            self._redirige("/transcription")
-            return
+        # Responsables Logistiques : pas d'accès à la sélection (dashboard fermé)
+        # -> renvoi sur leur espace, comme côté GET. L'Expert survey, lui, y a
+        # accès depuis le 2026-09-18 (cf. do_GET).
         if u.get("responsabilite") in _ROLES_LOGISTIQUE:
             self._redirige("/logistique")
             return

@@ -97,6 +97,18 @@ _ROLES_DISTRICT_COMMUNES = ("Superviseur Technique", "Logistique Inter-Communale
 # 1 district + 1 à 7 communes).
 _ROLES_LOGISTIQUE = ("Logistique District", "Logistique Inter-Communale")
 
+# JOURNAL DE BORD (/journal). ÉCRITURE = toute l'équipe technique de terrain (chacun
+# consigne ses activités du jour) ; LECTURE = les deux Coordonnateurs + l'Admin, qui
+# lisent les journaux de leur périmètre. Déclarés ICI (source de vérité des groupes
+# de rôles) car serveur_app ET le manuel (manuel_roles) s'en servent.
+ROLES_JOURNAL_ECRITURE = ("Comités Techniques", "Traitement", "Expert survey",
+                          "Superviseur Technique", "Logistique District",
+                          "Logistique Inter-Communale")
+ROLES_JOURNAL_LECTURE = ("Coordonnateur Nationale", "Coordonnateur régionale",
+                         "Admin")
+# DÉCLARATIONS des agents (/declaration) : saisie réservée au Superviseur Technique.
+ROLES_DECLARATION = ("Superviseur Technique",)
+
 MAX_COMMUNES_SUPERVISEUR = 7     # communes d'un rôle « district + communes »
 MAX_DISTRICTS = 5                # districts d'un rôle « multi-district »
 

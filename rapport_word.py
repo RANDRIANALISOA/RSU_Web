@@ -348,7 +348,7 @@ def _bande_drapeau(doc):
         tc_pr.append(borders)
 
 
-def _page_de_garde(doc, rapport, perim_label):
+def _page_de_garde(doc, rapport, perim_label, sous_titre=None):
     banniere = _banniere_png()
     if banniere:
         p = doc.add_paragraph()
@@ -393,7 +393,8 @@ def _page_de_garde(doc, rapport, perim_label):
     note = doc.add_paragraph()
     note.alignment = WD_ALIGN_PARAGRAPH.CENTER
     note.space_before = Pt(28)
-    r = note.add_run("Rapport rédigé automatiquement par intelligence artificielle "
+    r = note.add_run(sous_titre or
+                     "Rapport rédigé automatiquement par intelligence artificielle "
                      "à partir des journaux de bord (sans les noms des personnes). "
                      "À relire et valider avant diffusion.")
     r.font.size = Pt(9); r.italic = True; r.font.color.rgb = _GRIS_CLAIR
@@ -455,10 +456,140 @@ def _bloc_graphiques(doc, rapport):
 
 
 # ---------------------------------------------------------------------------
+# Présentation de l'équipe (tableau nominatif, déterministe — pas rédigé par l'IA)
+# ---------------------------------------------------------------------------
+def _tableau_equipe(doc, equipe):
+    """Tableau de présentation de l'équipe : Nom et Prénom, Fonction/Poste, District
+    d'affectation, Axe (pour Superviseur Technique / Logistique Inter-Communale)."""
+    if not equipe:
+        return
+    _titre(doc, "Composition de l'équipe", 2)
+    entetes = ["Nom et Prénom", "Fonction / Poste", "District d'affectation",
+               "Axe (Sup. Technique / Log. Inter-Communale)"]
+    tab = doc.add_table(rows=1, cols=len(entetes))
+    tab.alignment = WD_TABLE_ALIGNMENT.CENTER
+    tab.style = "Table Grid"
+    for i, txt in enumerate(entetes):
+        cel = tab.rows[0].cells[i]
+        cel.text = ""
+        _cell_shade(cel, _HEX_PRIMAIRE)
+        r = cel.paragraphs[0].add_run(txt)
+        r.bold = True
+        r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        r.font.size = Pt(9.5)
+    for m in equipe:
+        cells = tab.add_row().cells
+        valeurs = [m.get("nom_prenom") or "—", m.get("fonction") or "—",
+                   m.get("district") or "—", m.get("axe") or "—"]
+        for i, val in enumerate(valeurs):
+            cells[i].text = ""
+            r = cells[i].paragraphs[0].add_run(val)
+            r.font.size = Pt(9.5)
+            r.font.color.rgb = _GRIS
+            if i == 0:
+                r.bold = True
+    doc.add_paragraph().add_run().font.size = Pt(4)
+
+
+# ---------------------------------------------------------------------------
+# Annexe — pièces justificatives (photos / documents joints aux journaux)
+# ---------------------------------------------------------------------------
+def _chemin_sur(rel):
+    """Chemin absolu d'une pièce jointe si sous Rapport_Images / Rapport_Fichier ET
+    existant, sinon None (garde anti-traversée)."""
+    base = os.path.normpath(os.path.join(config.BASE, rel or ""))
+    for racine in (config.RAPPORT_IMAGES_DIR, config.RAPPORT_FICHIER_DIR):
+        rn = os.path.normpath(racine)
+        if base == rn or base.startswith(rn + os.sep):
+            return base if os.path.isfile(base) else None
+    return None
+
+
+def _image_pour_word(rel):
+    """Image d'une pièce jointe re-encodée en JPEG (via Pillow) pour un embarquement
+    fiable dans le .docx, quel que soit le format d'origine. BytesIO ou None."""
+    chemin = _chemin_sur(rel)
+    if not chemin:
+        return None
+    try:
+        from PIL import Image
+        img = Image.open(chemin).convert("RGB")
+        if max(img.size) > 1600:
+            img.thumbnail((1600, 1600))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        buf.seek(0)
+        return buf
+    except Exception:
+        return None
+
+
+def _annexe_pieces(doc, pieces):
+    """Annexe illustrée : chaque IMAGE jointe (« Pièce n°K ») avec son contexte
+    (district, date, fonction) et l'extrait d'activité ; les autres fichiers sont
+    listés (référence). Sautée si aucune pièce."""
+    pieces = pieces or []
+    images = [p for p in pieces if p.get("categorie") == "image"]
+    autres = [p for p in pieces if p.get("categorie") != "image"]
+    if not (images or autres):
+        return
+    doc.add_page_break()
+    _titre(doc, "Annexe — Pièces justificatives", 1)
+    p = doc.add_paragraph()
+    r = p.add_run("Photos et documents joints par les équipes à leurs journaux de "
+                  "bord, en appui des activités rapportées.")
+    r.italic = True
+    r.font.size = Pt(9.5)
+    r.font.color.rgb = _GRIS_CLAIR
+
+    for pj in images:
+        png = _image_pour_word(pj.get("chemin"))
+        if not png:
+            continue
+        lieu = pj.get("district_nom") or pj.get("district_code") or ""
+        lg = doc.add_paragraph()
+        lg.space_before = Pt(12)
+        r = lg.add_run(f'Pièce n°{pj.get("num")} — {lieu} · '
+                       f'{pj.get("date_court") or ""} · {pj.get("fonction") or ""}')
+        r.bold = True
+        r.font.size = Pt(10.5)
+        r.font.color.rgb = _ACCENT
+        pic = doc.add_paragraph()
+        pic.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        try:
+            pic.add_run().add_picture(png, width=Inches(5.3))
+        except Exception:
+            pass
+        extrait = (pj.get("extrait") or "").strip()
+        if extrait:
+            cap = doc.add_paragraph()
+            cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            r = cap.add_run(extrait)
+            r.italic = True
+            r.font.size = Pt(9)
+            r.font.color.rgb = _GRIS_CLAIR
+
+    if autres:
+        _titre(doc, "Autres documents joints", 3)
+        for pj in autres:
+            lieu = pj.get("district_nom") or pj.get("district_code") or ""
+            p = doc.add_paragraph(style="List Bullet")
+            _ajouter_runs(p, f'Pièce n°{pj.get("num")} — {pj.get("nom_fichier") or ""} '
+                             f'({lieu}, {pj.get("date_court") or ""})')
+
+
+# ---------------------------------------------------------------------------
 # Point d'entrée
 # ---------------------------------------------------------------------------
-def construire_docx(markdown, rapport, perim_label) -> bytes:
-    """Assemble le document Word et renvoie ses octets (.docx)."""
+def construire_docx(markdown, rapport, perim_label, pieces=None, equipe=None,
+                    sous_titre=None) -> bytes:
+    """Assemble le document Word et renvoie ses octets (.docx).
+
+    `pieces` (facultatif) : pièces justificatives de
+    `rapport_mission.pieces_jointes()` — images embarquées en annexe illustrée,
+    autres fichiers listés (mêmes numéros « Pièce n°K » que ceux vus par l'IA).
+    `equipe` (facultatif) : membres de `rapport_mission.equipe()` -> tableau nominatif
+    de présentation de l'équipe (Nom, Poste, District, Axe)."""
     doc = Document()
     normal = doc.styles["Normal"]
     normal.font.name = _POLICE
@@ -470,11 +601,19 @@ def construire_docx(markdown, rapport, perim_label) -> bytes:
         section.left_margin = Inches(0.9)
         section.right_margin = Inches(0.9)
 
-    _page_de_garde(doc, rapport, perim_label)
+    _page_de_garde(doc, rapport, perim_label, sous_titre)
     _cartes_kpi(doc, rapport)
+    try:
+        _tableau_equipe(doc, equipe)
+    except Exception as e:
+        print(f"[rapport_word] tableau équipe ignoré : {e}")
     _bloc_graphiques(doc, rapport)
     doc.add_paragraph().add_run().font.size = Pt(4)
     _ajouter_markdown(doc, markdown)
+    try:
+        _annexe_pieces(doc, pieces)
+    except Exception as e:
+        print(f"[rapport_word] annexe pièces jointes ignorée : {e}")
     try:
         _numeros_de_page(doc)
     except Exception:

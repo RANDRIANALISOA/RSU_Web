@@ -16,15 +16,34 @@ EN FRANÇAIS, à personnaliser — ce sont celles qu'une IA (API Claude) rédige
 mieux (voir synthese_ia(), DÉSACTIVÉE tant que la décision de confidentialité n'est
 pas prise : cf. CLAUDE.md).
 """
+import base64
 import datetime
 import html as htmllib
+import io
 import os
 import re
 import unicodedata
 
+import config
 import contexte_rsu
 import journal
+import utilisateurs
 import zones
+
+# Rôles « district + communes » -> une colonne « Axe » (leur jeu de communes) dans la
+# présentation de l'équipe. Ordre d'affichage des postes dans le tableau d'équipe.
+_ROLES_AXE = {"Superviseur Technique", "Logistique Inter-Communale"}
+_ORDRE_ROLES = ["Coordonnateur régionale", "Comités Techniques", "Traitement",
+                "Expert survey", "Superviseur Technique", "Logistique District",
+                "Logistique Inter-Communale"]
+
+
+# Nombre MAX de pièces jointes (photos + documents) prises en compte par le rapport
+# IA : elles sont ANALYSÉES par le modèle ET rapportées dans l'annexe Word. Bornage
+# commun IA/Word -> même numérotation « Pièce n°K » de part et d'autre. Réglable.
+_MAX_PIECES = int(os.environ.get("RSU_RAPPORT_MAX_PIECES", "25") or "25")
+# Longueur max du texte extrait d'un document (Word/Excel/CSV) envoyé au modèle.
+_MAX_TEXTE_DOC = 4000
 
 
 # ---------------------------------------------------------------------------
@@ -51,22 +70,28 @@ _MOTS_SOLUTION = ("solution", "resolu", "corrige", "regle", "remedie", "pallier"
                   "contourne", "rattrap")
 
 
-def collecter(conn, debut, fin, districts=None):
-    """Entrées de journal entre `debut` et `fin` (ISO), bornées au périmètre."""
+def collecter(conn, debut, fin, districts=None, login=None):
+    """Entrées de journal entre `debut` et `fin` (ISO), bornées au périmètre.
+    `login` (facultatif) : ne garde que les entrées de cet utilisateur — sert au
+    rapport de mission INDIVIDUEL (rapport_mission_users)."""
     jours = set(journal.plage_dates(debut, fin))
     if not jours:
         return []
     ent = journal.activites(conn, districts=districts, limite=1000000)
-    return [e for e in ent if e.get("date_jour") in jours]
+    out = [e for e in ent if e.get("date_jour") in jours]
+    if login:
+        out = [e for e in out if e.get("login") == login]
+    return out
 
 
 def _codes_de(e):
     return [c for c in (e.get("code_district") or "").replace(" ", "").split(",") if c]
 
 
-def synthese_locale(conn, debut, fin, districts=None):
-    """Structure les journaux : stats + regroupement + itinéraire + problèmes."""
-    entrees = collecter(conn, debut, fin, districts)
+def synthese_locale(conn, debut, fin, districts=None, login=None):
+    """Structure les journaux : stats + regroupement + itinéraire + problèmes.
+    `login` (facultatif) : borne au seul utilisateur (rapport individuel)."""
+    entrees = collecter(conn, debut, fin, districts, login=login)
     noms_d = _noms_districts(conn)
     jours_periode = journal.plage_dates(debut, fin)
 
@@ -147,6 +172,214 @@ def synthese_locale(conn, debut, fin, districts=None):
         "itineraire": itineraire,
         "problemes": problemes,
     }
+
+
+# ---------------------------------------------------------------------------
+# Présentation de l'équipe (comptes affectés au périmètre — AVEC les noms : cette
+# table est factuelle et déterministe, elle n'est PAS produite par l'IA).
+# ---------------------------------------------------------------------------
+def equipe(conn, districts):
+    """Membres de l'équipe affectés au périmètre du rapport, pour la table de
+    présentation. `districts` = ensemble de codes (str/int) ou None (tout).
+
+    Renvoie une liste ordonnée de dicts : nom_prenom, fonction (poste),
+    district (libellé du/des district(s) d'affectation dans le périmètre), axe
+    (communes pour Superviseur Technique / Logistique Inter-Communale, sinon '').
+    Exclut l'Admin et le Coordonnateur Nationale (zone entière, non rattaché à un
+    district) ; ne garde que les comptes actifs."""
+    perim = {str(d) for d in districts} if districts else None
+    noms_d = _noms_districts(conn)
+    membres = []
+    for u in utilisateurs.lister(conn):
+        role = (u.get("responsabilite") or "").strip()
+        if role in ("Admin", "Coordonnateur Nationale") or not u.get("actif"):
+            continue
+        ds = set()
+        if u.get("district_affectation") is not None:
+            ds.add(str(u["district_affectation"]))
+        ds |= {str(d) for d in (u.get("districts_affectation") or [])}
+        if perim is not None:
+            ds &= perim
+        if not ds:                          # aucun district (dans le périmètre) -> hors
+            continue
+        axe = ""
+        if role in _ROLES_AXE:
+            axe = ", ".join(zones.libelle_commune(conn, c) or str(c)
+                            for c in (u.get("communes_affectation") or []))
+        membres.append({
+            "nom_prenom": u.get("nom_prenom") or u.get("login") or "—",
+            "fonction": role or "—",
+            "district": ", ".join(noms_d.get(c, c) for c in sorted(ds)) or "—",
+            "axe": axe,
+            "_ord": (_ORDRE_ROLES.index(role) if role in _ORDRE_ROLES else 99)})
+    membres.sort(key=lambda m: (m["_ord"], m["district"], m["nom_prenom"].lower()))
+    for m in membres:
+        m.pop("_ord", None)
+    return membres
+
+
+# ---------------------------------------------------------------------------
+# Pièces justificatives (photos / documents joints aux journaux)
+# ---------------------------------------------------------------------------
+def _chemin_sur(rel):
+    """Chemin ABSOLU d'une pièce jointe si (et seulement si) il reste sous l'un des
+    deux dossiers racine (Rapport_Images / Rapport_Fichier) ET existe. Sinon None
+    (garde anti-traversée : on ne lit jamais un fichier hors de ces dossiers)."""
+    base = os.path.normpath(os.path.join(config.BASE, rel or ""))
+    for racine in (config.RAPPORT_IMAGES_DIR, config.RAPPORT_FICHIER_DIR):
+        rn = os.path.normpath(racine)
+        if base == rn or base.startswith(rn + os.sep):
+            return base if os.path.isfile(base) else None
+    return None
+
+
+def pieces_jointes(conn, rapport, limite=_MAX_PIECES):
+    """Liste ORDONNÉE et bornée des pièces jointes des journaux du rapport, avec leur
+    contexte, numérotées « Pièce n°K ». L'ordre est DÉTERMINISTE (mêmes numéros pour
+    l'analyse IA et pour l'annexe Word). Chaque pièce : num, categorie (image/fichier),
+    nom_fichier, chemin (relatif), ext, date_court, district_code/nom, fonction, extrait
+    (début du journal associé)."""
+    contexte, ids, vus = {}, [], set()
+    for d in rapport.get("districts", []):
+        for f in d.get("fonctions", []):
+            for p in f.get("personnes", []):
+                for e in sorted(p.get("entrees", []),
+                                key=lambda e: e.get("date_jour") or ""):
+                    aid = e.get("id")
+                    if not aid or aid in vus:     # une entrée peut apparaître sous
+                        continue                  # plusieurs districts -> dédoublonner
+                    vus.add(aid)
+                    ids.append(aid)
+                    txt = (e.get("journal") or "").strip()
+                    contexte[aid] = {
+                        "district_nom": d.get("nom"), "district_code": d.get("code"),
+                        "fonction": e.get("fonction") or f.get("fonction") or "",
+                        "date_court": e.get("date_court") or e.get("date_jour") or "",
+                        "extrait": (txt[:300] + "…") if len(txt) > 300 else txt}
+    par = journal.fichiers_par_activite(conn, ids)
+    out, num = [], 0
+    for aid in ids:
+        for f in par.get(aid, []):
+            num += 1
+            if num > limite:
+                return out
+            out.append({"num": num, "categorie": f.get("categorie"),
+                        "nom_fichier": f.get("nom_fichier"), "chemin": f.get("chemin"),
+                        "ext": os.path.splitext(f.get("nom_fichier") or "")[1].lower(),
+                        **contexte.get(aid, {})})
+    return out
+
+
+def _libelle_piece(pj) -> str:
+    """Libellé lisible d'une pièce (repris identiquement dans le prompt et le Word)."""
+    lieu = pj.get("district_nom") or pj.get("district_code") or "—"
+    return (f'Pièce n°{pj["num"]} — {lieu} · {pj.get("date_court") or "—"} · '
+            f'{pj.get("fonction") or "—"}')
+
+
+def _bloc_image_ia(chemin_abs):
+    """(media_type, base64) d'une image RE-encodée en JPEG et redimensionnée pour
+    l'API (borne la taille), ou None si illisible. Normalise tous les formats
+    (jfif, webp, heic…) en image/jpeg -> media_type toujours accepté."""
+    try:
+        from PIL import Image
+        img = Image.open(chemin_abs)
+        img = img.convert("RGB")
+        if max(img.size) > 1400:
+            img.thumbnail((1400, 1400))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        return "image/jpeg", base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        return None
+
+
+def _texte_document(chemin_abs, ext):
+    """Texte extrait d'un document joint (Word/Excel/CSV/texte) pour analyse par le
+    modèle, tronqué à _MAX_TEXTE_DOC. '' si non extractible."""
+    try:
+        if ext == ".docx":
+            from docx import Document
+            d = Document(chemin_abs)
+            txt = "\n".join(p.text for p in d.paragraphs if p.text.strip())
+        elif ext in (".xlsx", ".xlsm"):
+            import openpyxl
+            wb = openpyxl.load_workbook(chemin_abs, read_only=True, data_only=True)
+            morceaux = []
+            for ws in wb.worksheets[:2]:
+                morceaux.append(f"[Feuille : {ws.title}]")
+                for i, row in enumerate(ws.iter_rows(values_only=True)):
+                    if i >= 100:
+                        morceaux.append("… (suite tronquée)")
+                        break
+                    cells = [str(c) for c in row if c not in (None, "")]
+                    if cells:
+                        morceaux.append(" | ".join(cells))
+            wb.close()
+            txt = "\n".join(morceaux)
+        elif ext in (".txt", ".csv"):
+            with open(chemin_abs, "r", encoding="utf-8", errors="replace") as fh:
+                txt = fh.read()
+        else:
+            return ""
+    except Exception:
+        return ""
+    txt = txt.strip()
+    return (txt[:_MAX_TEXTE_DOC] + "\n… (document tronqué)") \
+        if len(txt) > _MAX_TEXTE_DOC else txt
+
+
+def _contenu_ia(rapport, perimetre_label, pieces):
+    """Construit le `content` (liste de blocs) du message utilisateur : le texte des
+    journaux, puis chaque pièce justificative (image analysée, PDF, ou texte extrait
+    d'un document), précédée de son libellé numéroté. Les pièces illisibles sont
+    signalées en texte (le numéro reste, pour rester aligné avec l'annexe Word)."""
+    blocs = [{"type": "text",
+              "text": "Rédige le rapport de mission à partir des journaux de bord "
+                      "ci-dessous.\n\n" + _journaux_en_texte(rapport, perimetre_label)}]
+    if not pieces:
+        return blocs
+    blocs.append({"type": "text", "text":
+                  "\n=== PIÈCES JUSTIFICATIVES jointes par les équipes ===\n"
+                  "Ces photos et documents accompagnent des activités du journal. "
+                  "Analyse-les et appuie-toi dessus pour ILLUSTRER et JUSTIFIER les "
+                  "activités correspondantes dans les sections concernées ; référence "
+                  "chaque pièce par son numéro (« Pièce n°X »)."})
+    for pj in pieces:
+        blocs.append({"type": "text",
+                      "text": "\n" + _libelle_piece(pj)
+                      + (f'. Activité associée : {pj.get("extrait")}'
+                         if pj.get("extrait") else "")})
+        chemin = _chemin_sur(pj.get("chemin"))
+        if not chemin:
+            blocs.append({"type": "text", "text": "(pièce absente du serveur)"})
+            continue
+        if pj.get("categorie") == "image":
+            im = _bloc_image_ia(chemin)
+            if im:
+                media, data = im
+                blocs.append({"type": "image", "source": {
+                    "type": "base64", "media_type": media, "data": data}})
+            else:
+                blocs.append({"type": "text",
+                              "text": f'(image « {pj.get("nom_fichier")} » non lisible)'})
+        elif pj.get("ext") == ".pdf":
+            try:
+                with open(chemin, "rb") as fh:
+                    data = base64.b64encode(fh.read()).decode("ascii")
+                blocs.append({"type": "document", "source": {
+                    "type": "base64", "media_type": "application/pdf", "data": data}})
+            except Exception:
+                blocs.append({"type": "text",
+                              "text": f'(PDF « {pj.get("nom_fichier")} » non lisible)'})
+        else:
+            txt = _texte_document(chemin, pj.get("ext"))
+            blocs.append({"type": "text",
+                          "text": (f'Contenu du document « {pj.get("nom_fichier")} » :\n'
+                                   + txt) if txt else
+                                  f'(document « {pj.get("nom_fichier")} » joint, '
+                                  'contenu non extractible)'})
+    return blocs
 
 
 # ---------------------------------------------------------------------------
@@ -361,9 +594,12 @@ def page_formulaire(debut_defaut, fin_defaut, districts_dispo, action, retour_hr
         opts.append(f'<option value="{esc(d["code"])}">{esc(d["nom"])} ({esc(d["code"])})</option>')
     if mode_ia:
         intro = ('Génère un <strong>rapport de mission Word rédigé par IA</strong> à '
-                 'partir des journaux de bord de la période choisie. Les journaux, '
-                 '<strong>sans les noms des personnes</strong>, sont envoyés à l\'API pour '
-                 'la rédaction (~1 à 2 min) ; le fichier Word se télécharge automatiquement. '
+                 'partir des journaux de bord de la période choisie. Les journaux '
+                 '(<strong>sans les noms des personnes</strong>) ainsi que les '
+                 '<strong>photos et fichiers joints</strong> aux journaux sont envoyés à '
+                 'l\'API : les images sont <strong>analysées</strong> et reprises dans le '
+                 'rapport comme <strong>pièces justificatives</strong> (annexe illustrée). '
+                 'Rédaction ~1 à 2 min ; le fichier Word se télécharge automatiquement. '
                  'À relire avant diffusion.')
         libelle_bouton = '📄 Générer le rapport Word (IA)'
     else:
@@ -431,6 +667,12 @@ _SYSTEM_IA = (
     "élément du contexte général (ex. l'historique des phases, une liste de districts "
     "d'autres vagues) comme un fait observé pendant la période rapportée. En cas de "
     "doute, appuie-toi sur les journaux.\n\n"
+    "PIÈCES JUSTIFICATIVES : des photos et documents peuvent être joints au message, "
+    "numérotés « Pièce n°X » avec leur district, date et activité. Analyse-les et "
+    "utilise-les pour ILLUSTRER et JUSTIFIER les activités correspondantes ; cite-les "
+    "par leur numéro là où c'est pertinent (les images seront reprises en annexe du "
+    "document). Ne fais pas de commentaire sur des personnes identifiables visibles "
+    "sur les photos.\n\n"
     "=== CONTEXTE GÉNÉRAL DU PROGRAMME (cadrage, non spécifique à la mission) ===\n"
     + contexte_rsu.CONTEXTE_RSU
 )
@@ -482,14 +724,17 @@ def _client_ia():
     return anthropic.Anthropic(**kwargs)
 
 
-def synthese_ia_iter(rapport, perimetre_label):
+def synthese_ia_iter(rapport, perimetre_label, pieces=None):
     """Génère le rapport (Markdown) via l'API Claude (Opus 5) EN FLUX : produit les
     morceaux de texte au fur et à mesure. Permet de garder la connexion active
     (heartbeats) pendant la génération -> pas de 504 côté proxy. Lève une exception
-    (clé, crédit, réseau…) dès la 1re lecture du flux."""
+    (clé, crédit, réseau…) dès la 1re lecture du flux.
+
+    `pieces` (facultatif) : pièces justificatives (photos/documents) de
+    `pieces_jointes()` — les images sont ANALYSÉES par le modèle, les documents
+    (PDF, ou texte extrait) joints en appui des activités."""
     client = _client_ia()
-    contenu = ("Rédige le rapport de mission à partir des journaux de bord "
-               "ci-dessous.\n\n" + _journaux_en_texte(rapport, perimetre_label))
+    contenu = _contenu_ia(rapport, perimetre_label, pieces or [])
     with client.messages.stream(
         model="claude-opus-5",
         max_tokens=20000,

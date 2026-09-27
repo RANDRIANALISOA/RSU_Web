@@ -50,6 +50,17 @@ IMAGES_DIR = os.path.join(BASE, "images")
 # Distinct de DATA_DIR (les .dta de simulation du projet exe).
 UPLOAD_DIR = os.environ.get("RSU_UPLOAD_DIR", os.path.join(BASE, "DATA_serveur"))
 
+# Pièces jointes des JOURNAUX DE BORD (route /journal). L'équipe technique peut
+# joindre des IMAGES et d'autres FICHIERS (Word, Excel, PDF…) à ses entrées. Les
+# fichiers sont rangés en sous-dossiers par CODE DISTRICT :
+#     RAPPORT_IMAGES_DIR/<code_district>/…   (images)
+#     RAPPORT_FICHIER_DIR/<code_district>/…  (autres fichiers)
+# Surchargeables par variables d'environnement (chemins absolus en production).
+RAPPORT_IMAGES_DIR = os.environ.get(
+    "RSU_RAPPORT_IMAGES", os.path.join(BASE, "Rapport_Images"))
+RAPPORT_FICHIER_DIR = os.environ.get(
+    "RSU_RAPPORT_FICHIER", os.path.join(BASE, "Rapport_Fichier"))
+
 # Données de simulation (.dta) : référencées dans le projet .exe par défaut.
 # En production, l'app lira la base de données, pas ce dossier.
 DATA_DIR = os.environ.get("RSU_DATA", os.path.join(EXE_DIR, "DATA"))

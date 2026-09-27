@@ -14,9 +14,36 @@ __pycache__/
 # Uploads, logs, secrets
 uploads/
 instance/
+DATA_serveur/
+Rapport_Images/
+Rapport_Fichier/
 *.log
 .env
 deploy/rsu-web.env
 
 # Sauvegardes automatiques (ne pas versionner)
 *_backup_*/
+# BASE_BRUTE/ : export brut Survey Solutions, SUPPRIME le 2026-09-17 (aucun code ne
+# s'en servait). La regle reste, au cas ou un nouvel export brut serait depose ici.
+BASE_BRUTE/
+
+# Donnees brutes RGPH-3 2018 (INSTAT) : 648 Mo, au-dela de la limite GitHub.
+# Se retelechargent depuis Drive ; la chaine qui les exploite est dans rgph3/.
+*.sav
+# Sorties intermediaires regenerables par rgph3/01..04 (la table de passage
+# auditable est versionnee a la racine : table_passage_commune_*.csv)
+rgph3/rgph_geo.csv
+rgph3/rsu_geo.csv
+rgph3/map_commune.csv
+rgph3/map_district_auto.csv
+rgph3/agregats_rgph3.sqlite
+
+# Sauvegardes de la base (1,1 Go, donnees nominatives)
+*.sqlite.*
+*.bak
+# Rapports de mission individuels generes (journaux + photos : nominatifs)
+rapport_mission/
+# Exports bruts Survey Solutions deposes a la racine
+*_STATA_All_*/
+# Classeurs de test generes
+export2.xlsx

@@ -248,6 +248,113 @@ def contours_pour(conn, codes_fkt) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Contours pour une CARTE (district + communes), allegees
+# ---------------------------------------------------------------------------
+# Tolerance de simplification, en degres. 0.0002 deg ~ 22 m a Madagascar : c'est
+# l'ecart MAXIMUM autorise entre le trace d'origine et le trace allege (garantie
+# de Douglas-Peucker), invisible tant qu'on ne zoome pas a la maison pres. Mesure
+# sur le district + ses communes : 926 Ko -> 79 Ko (1106), 2 306 Ko -> 187 Ko
+# (5201, dont la cote est tres decoupee). A 0.0001 (~11 m), 5201 pesait encore
+# 767 Ko ; a 0.0005 (~56 m), le trace commence a couper les meandres.
+TOLERANCE_CARTE = 0.0002
+
+
+def _douglas_peucker(points, tol):
+    """Simplification de polyligne (Douglas-Peucker), iterative (pas de recursion
+    : un anneau de fokontany peut compter des dizaines de milliers de points)."""
+    n = len(points)
+    if n < 3:
+        return list(points)
+    garder = [False] * n
+    garder[0] = garder[n - 1] = True
+    pile = [(0, n - 1)]
+    while pile:
+        i, j = pile.pop()
+        if j <= i + 1:
+            continue
+        ax, ay = points[i]
+        bx, by = points[j]
+        dx, dy = bx - ax, by - ay
+        norme = (dx * dx + dy * dy) ** 0.5
+        pire, imax = -1.0, i
+        for k in range(i + 1, j):
+            px, py = points[k]
+            if norme == 0:                       # extremites confondues
+                d = ((px - ax) ** 2 + (py - ay) ** 2) ** 0.5
+            else:                                # distance point -> segment
+                d = abs(dy * px - dx * py + bx * ay - by * ax) / norme
+            if d > pire:
+                pire, imax = d, k
+        if pire > tol:
+            garder[imax] = True
+            pile.append((i, imax))
+            pile.append((imax, j))
+    return [points[k] for k in range(n) if garder[k]]
+
+
+def _alleger(anneaux, tol):
+    """Anneaux simplifies ; un anneau reduit a moins de 4 points est ecarte (il
+    ne dessinerait plus une surface)."""
+    out = []
+    for anneau in anneaux or ():
+        simple = _douglas_peucker(anneau, tol)
+        if len(simple) >= 4:
+            out.append(simple)
+    return out
+
+
+def contours_zones(conn, districts=None, communes=None, commune=None,
+                   fokontany=None, tolerance=TOLERANCE_CARTE) -> dict:
+    """Contours d'une CARTE, au niveau affiche :
+
+        {"niveau": "district"|"commune"|"fokontany",
+         "principal": {code: anneaux},    # trace ROUGE = le niveau courant
+         "sous":      {code: anneaux}}    # traces BLEUS = ses enfants
+
+    Meme regle que la carte du denombrement. `districts`/`communes` bornent au
+    perimetre du role ; `commune`/`fokontany` sont la descente demandee.
+    Renvoie des contours vides si le perimetre n'est pas borne (`districts` None)
+    ou si les limites du district ne sont pas en base (seuls quatre districts en
+    ont, cf. l'en-tete de ce module)."""
+    def lire(table, colonne, codes):
+        return _charger_niveau(conn, table, colonne, codes)
+
+    def alleger(d):
+        return {k: _alleger(v, tolerance) for k, v in d.items()}
+
+    if fokontany:
+        return {"niveau": "fokontany",
+                "principal": alleger(lire("limite_fokontany", "code_fokontany",
+                                          [str(fokontany)])),
+                "sous": {}}
+    cur = conn.cursor()
+    if commune:
+        cur.execute('SELECT code_fokontany FROM "fokontany" WHERE code_commune = ?',
+                    (int(commune),))
+        fkts = [str(r[0]) for r in cur.fetchall()]
+        return {"niveau": "commune",
+                "principal": alleger(lire("limite_commune", "code_commune",
+                                          [str(commune)])),
+                "sous": alleger(lire("limite_fokontany", "code_fokontany", fkts))}
+    if not districts:
+        return {"niveau": "district", "principal": {}, "sous": {}}
+    dcodes = sorted(str(d) for d in districts)
+    if communes:
+        ccodes = sorted(str(c) for c in communes)
+    else:
+        # Toutes les communes des districts demandes (le referentiel porte la
+        # relation ; le code commune commence par le code district).
+        ccodes = []
+        for d in dcodes:
+            cur.execute('SELECT code_commune FROM "commune" WHERE code_district = ?',
+                        (int(d),))
+            ccodes += [str(r[0]) for r in cur.fetchall()]
+    return {"niveau": "district",
+            "principal": alleger(lire("limite_district", "code_district", dcodes)),
+            "sous": alleger(lire("limite_commune", "code_commune", ccodes))}
+
+
 def districts_couverts(conn) -> set:
     """Ensemble des codes district (str) ayant des limites corrigees en base."""
     try:

@@ -97,6 +97,11 @@ body.rsu-nav-col .sidebar { display:none; }
 .chart-title { font-size:0.8125rem; font-weight:700; color:var(--text); }
 .chart-sub   { font-size:0.6875rem; color:var(--muted); margin-top:2px; }
 .chart-wrap { position:relative; height:13.75rem; }
+/* Question retiree du questionnaire : on remplace le graphique par une note
+   plutot que d'afficher un graphe vide (qui se lirait comme « zero partout »). */
+.chart-nd { display:flex; align-items:center; justify-content:center; height:100%;
+  padding:1rem; text-align:center; color:#64748b; font-size:.85rem; font-style:italic;
+  background:#f8fafc; border:1px dashed #cbd5e1; border-radius:.5rem; }
 .ar-tabs { display:flex; gap:0.375rem; flex-wrap:wrap; margin-bottom:1.25rem; max-height:7.5rem; overflow-y:auto; }
 .ar-tab { padding:0.375rem 0.875rem; border-radius:1.25rem; font-size:0.75rem; font-weight:600; cursor:pointer; border:1px solid var(--border); background:var(--surface); color:var(--muted); transition:all 0.15s; }
 .ar-tab:hover { border-color:var(--accent); color:var(--accent); }

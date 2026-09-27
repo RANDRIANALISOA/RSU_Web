@@ -246,6 +246,12 @@ def _entete(actif="") -> str:
             f'{lien("/admin/utilisateurs","Utilisateurs","users")}'
             f'{lien("/admin/utilisateurs/ajouter","Ajouter","users_add")}'
             f'{lien("/admin/journal","Journal","journal")}'
+            # Suppression des données d'un district : opération destructive,
+            # réservée à l'Admin (cf. suppression.py).
+            f'{lien("/admin/suppression","Suppression","suppr")}'
+            # Consignes : l'Admin ÉMET des consignes comme les Coordonnateurs.
+            # La page vit hors de l'espace Admin (serveur_app), d'où le lien brut.
+            f'<a href="/consignes/nouvelle">Consignes</a>'
             f'<a href="/">Application</a>'
             f'<span class="sp"></span></div>'  # deconnexion = bandeau (haut droite)
             f'<div class="wrap">')
@@ -255,18 +261,21 @@ def _pied() -> str:
     return "</div></body></html>"
 
 
-def _table_transcriptions(rows) -> str:
-    """Historique des transcriptions (date+heure, personne, district, issue)."""
+def _table_transcriptions(rows, vide="Aucune opération enregistrée.") -> str:
+    """Historique d'ingestion d'UNE phase (date+heure, personne, district, issue).
+
+    Le district est nommé (« FARATSIHO (1406) ») et non réduit à son code : sur la
+    vue Admin, qui couvre tous les districts, c'est la colonne qui dit d'où vient
+    l'opération. La pastille est verte dès que le statut n'est pas « Échec »."""
     lignes = "".join(
         f'<tr><td>{ESC(x["quand_court"])}</td>'
         f'<td>{ESC(x["nom_prenom"] or x["login"] or "—")}</td>'
-        f'<td>{ESC(x["district"])}</td>'
-        f'<td>{ESC(x["evenement"])}</td>'
-        f'<td><span class="pill {"ok" if x["statut"] == "Réussi" else "ko"}">'
+        f'<td>{ESC(x["district_txt"])}</td>'
+        f'<td>{ESC(x["evenement_court"])}</td>'
+        f'<td><span class="pill {"ok" if x["reussi"] else "ko"}">'
         f'{ESC(x["statut"])}</span></td>'
         f'<td>{ESC(x["detail"])}</td></tr>' for x in rows) \
-        or ('<tr><td colspan="6"><small>Aucune transcription enregistrée.'
-            '</small></td></tr>')
+        or (f'<tr><td colspan="6"><small>{ESC(vide)}</small></td></tr>')
     return ('<table><tr><th>Date &amp; heure</th><th>Personne</th><th>District</th>'
             '<th>Opération</th><th>Statut</th><th>Détail</th></tr>'
             + lignes + '</table>')
@@ -303,8 +312,12 @@ def page_admin(conn, utilisateur, nb_connectes=0) -> str:
         f'<td>{ESC(x["motif"])}</td></tr>' for x in te) \
         or '<tr><td colspan="3"><small>Aucune tentative échouée.</small></td></tr>'
 
-    # Transcriptions récentes (téléversements + transcriptions, réussis ou non)
-    tr = journal.transcriptions(conn, limite=15)
+    # Ingestions récentes (téléversements + transcriptions, réussis ou non).
+    # Les DEUX PHASES sont montrées séparément : ce sont deux chaînes distinctes
+    # (fichiers, tables, questionnaire), les mélanger dans un seul tableau ne
+    # permettait pas de voir où en est chacune.
+    tr_den = journal.transcriptions(conn, limite=10, phase=journal.PHASE_DEN)
+    tr_vad = journal.transcriptions(conn, limite=10, phase=journal.PHASE_VAD)
 
     # Couverture
     cov = couverture(conn)
@@ -334,11 +347,20 @@ def page_admin(conn, utilisateur, nb_connectes=0) -> str:
             + '<h2>Tentatives de connexion échouées</h2>'
             + '<table><tr><th>Identifiant saisi</th><th>Quand</th><th>Motif</th></tr>'
             + lignes_t + '</table>'
-            + '<h2>Transcriptions récentes</h2>'
-            + _table_transcriptions(tr)
+            + '<h2>Ingestion — Dénombrement</h2>'
+            + _table_transcriptions(
+                tr_den, "Aucun téléversement de dénombrement enregistré.")
+            + '<h2>Ingestion — Visite à domicile</h2>'
+            + _table_transcriptions(
+                tr_vad, "Aucun téléversement de visite à domicile enregistré.")
             + '<h2>Couverture des affectations</h2>'
             + '<table><tr><th>District (avec responsable)</th><th>Responsables</th>'
               '<th>Communes sans superviseur</th></tr>' + lignes_c + '</table>'
+            + '<h2>Référentiel géographique</h2>'
+            + '<p>Anomalies détectées dans le fichier de mise à jour des 31 districts '
+              '(codes fokontany ne s’emboîtant pas dans leur commune) : '
+              '<a href="/admin/anomalies-zones.xlsx">⬇ Télécharger le rapport '
+              '(Excel)</a>.</p>'
             + _pied())
 
 
@@ -379,8 +401,51 @@ def _options_provinces(provinces) -> str:
                       for p in provinces))
 
 
-def page_admin_utilisateurs(conn, message=None, erreur=None) -> str:
-    comptes = utilisateurs.lister(conn)
+def _districts_utilisateur(u) -> list:
+    """Codes (str) des district(s) d'affectation d'un compte : plusieurs pour un
+    rôle multi-district (`districts_affectation`), un seul pour un rôle mono-
+    district (`district_affectation`), aucun pour un rôle « toute la zone »."""
+    dcodes = [str(d) for d in (u.get("districts_affectation") or [])]
+    if u.get("district_affectation"):
+        dcodes.append(str(u["district_affectation"]))
+    # dé-doublonné, en gardant l'ordre (un compte multi-district ne répète pas
+    # son district s'il figure aussi dans district_affectation).
+    vus = set()
+    return [d for d in dcodes if not (d in vus or vus.add(d))]
+
+
+def _district_html(u, noms) -> str:
+    """Colonne « District » : nom(s) résolus via `noms` (code -> nom, cf.
+    zones.tous_districts), ou « Toute la zone » pour un rôle sans affectation
+    géographique (Admin, Coordonnateur Nationale)."""
+    codes = _districts_utilisateur(u)
+    if not codes:
+        return '<small>Toute la zone</small>'
+    return '<small>' + ", ".join(ESC(noms.get(c, c)) for c in codes) + '</small>'
+
+
+def page_admin_utilisateurs(conn, message=None, erreur=None, filtre_district=None,
+                            filtre_role=None, filtre_texte=None) -> str:
+    tous = utilisateurs.lister(conn)
+    districts_ref = zones.tous_districts(conn)
+    noms_districts = {d["code"]: d["nom"] for d in districts_ref}
+
+    filtre_district = (filtre_district or "").strip()
+    filtre_role = (filtre_role or "").strip()
+    filtre_texte = (filtre_texte or "").strip()
+
+    comptes = tous
+    if filtre_district:
+        comptes = [u for u in comptes
+                  if filtre_district in _districts_utilisateur(u)]
+    if filtre_role:
+        comptes = [u for u in comptes if u["responsabilite"] == filtre_role]
+    if filtre_texte:
+        aiguille = filtre_texte.lower()
+        comptes = [u for u in comptes
+                  if aiguille in (u["nom_prenom"] or "").lower()
+                  or aiguille in (u["login"] or "").lower()]
+
     rows = ""
     for u in comptes:
         aff = utilisateurs.affectation_texte(conn, u["district_affectation"],
@@ -392,7 +457,9 @@ def page_admin_utilisateurs(conn, message=None, erreur=None) -> str:
         lg = ESC(u["login"])
         rows += (
             f'<tr><td><b>{lg}</b></td><td>{ESC(u["nom_prenom"])}</td>'
-            f'<td>{ESC(u["responsabilite"])}</td><td><small>{ESC(aff)}</small></td>'
+            f'<td>{ESC(u["responsabilite"])}</td>'
+            f'<td>{_district_html(u, noms_districts)}</td>'
+            f'<td><small>{ESC(aff)}</small></td>'
             f'<td><small>{_contact_html(u)}</small></td>'
             f'<td>{etat}</td><td>'
             f'<a href="/admin/utilisateurs/modifier?login={urllib.parse.quote(u["login"])}">'
@@ -413,17 +480,50 @@ def page_admin_utilisateurs(conn, message=None, erreur=None) -> str:
             f'<input type="password" name="mdp" placeholder="nouveau mot de passe" '
             f'style="width:150px"><button class="sec">Réinit.</button></form>'
             f'</td></tr>')
+    if not rows:
+        rows = ('<tr><td colspan="8"><small>Aucun compte ne correspond '
+                'à ces filtres.</small></td></tr>')
 
     msg = f'<div class="msg">{ESC(message)}</div>' if message else ''
     err = f'<div class="err">{erreur}</div>' if erreur else ''   # erreur : HTML permis
+
+    opts_district = ['<option value="">— Tous les districts —</option>']
+    for d in sorted(districts_ref, key=lambda d: d["nom"]):
+        sel = ' selected' if d["code"] == filtre_district else ''
+        opts_district.append(f'<option value="{d["code"]}"{sel}>'
+                             f'{ESC(d["nom"])}</option>')
+    opts_role = ['<option value="">— Tous les rôles —</option>']
+    for r in utilisateurs.RESPONSABILITES:
+        sel = ' selected' if r == filtre_role else ''
+        opts_role.append(f'<option value="{ESC(r)}"{sel}>{ESC(r)}</option>')
+
+    filtre_actif = bool(filtre_district or filtre_role or filtre_texte)
+    reinit = (' &nbsp; <a href="/admin/utilisateurs">Réinitialiser les filtres</a>'
+              if filtre_actif else '')
+    compteur = (f'<p><small>{len(comptes)} compte(s) affiché(s) sur {len(tous)}.'
+                f'{reinit}</small></p>' if filtre_actif else '')
+
+    formulaire_filtres = (
+        '<form method="get" action="/admin/utilisateurs" class="grid-form">'
+        '<div><label for="district">District</label>'
+        f'<select id="district" name="district">{"".join(opts_district)}</select></div>'
+        '<div><label for="role">Rôle</label>'
+        f'<select id="role" name="role">{"".join(opts_role)}</select></div>'
+        '<div><label for="q">Nom ou identifiant</label>'
+        '<input type="text" id="q" name="q" placeholder="Rechercher…" '
+        f'value="{ESC(filtre_texte)}"></div>'
+        '<div style="align-self:end"><button>Filtrer</button></div>'
+        '</form>')
 
     return (_entete("users")
             + '<h1>Gestion des utilisateurs</h1>' + msg + err
             + '<p><a href="/admin/utilisateurs/ajouter"><button>+ Ajouter un '
               'utilisateur</button></a> &nbsp; '
               '<a href="/admin/export/utilisateurs.csv">⬇ Export CSV des comptes</a></p>'
-            + '<table><tr><th>Login</th><th>Nom</th><th>Rôle</th><th>Affectation</th>'
-              '<th>Contact</th><th>État</th><th>Actions</th></tr>' + rows + '</table>'
+            + formulaire_filtres + compteur
+            + '<table><tr><th>Login</th><th>Nom</th><th>Rôle</th><th>District</th>'
+              '<th>Affectation</th><th>Contact</th><th>État</th><th>Actions</th></tr>'
+            + rows + '</table>'
             + _pied())
 
 

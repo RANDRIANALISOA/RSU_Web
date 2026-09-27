@@ -3,8 +3,6 @@
 //  CALCULS DE BASE
 // ══════════════════════════════════════════════════════════════════
 const TOTAL       = MENAGES.length;
-const CARNET_LABEL   = {1:'Avec carnet (scanné)',2:'Avec carnet (non scanné)',3:'Sans carnet',4:'Ne sait pas'};
-const CARNET_COLOR   = {1:'#2563eb',2:'#0ea5e9',3:'#ef4444',4:'#94a3b8'};
 const PRESENCE_LABEL = {1:'Présent',2:'Absent'};
 const ELEC_LABEL      = {1:'Oui',2:'Non'};
 const COLORS = ['#2563eb','#0ea5e9','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#ec4899','#84cc16','#f97316'];
@@ -13,8 +11,53 @@ function colorOf(i){ return COLORS[i - Math.floor(i/COLORS.length)*COLORS.length
 function avg(arr){ return arr.length ? Math.round(arr.reduce((s,v)=>s+v,0)/arr.length) : 0; }
 function pct(n,t){ return t ? Math.round(n/t*100) : 0; }
 function isValidDate(d){ return !!d && /^\d{8}$/.test(d); }
+function r2(x){ return Math.round(x*100)/100; }
+function r1(x){ return Math.round(x*10)/10; }
+function num2(v){ return Number(v).toFixed(2).replace('.',','); }
+function num1(v){ return Number(v).toFixed(1).replace('.',','); }
+// Taille des ménages : effectif, personnes, MOYENNE, ÉCART-TYPE (population) et
+// COEFFICIENT DE VARIATION (écart-type / moyenne, en %) — la dispersion RELATIVE,
+// comparable d'une zone à l'autre même quand les tailles moyennes diffèrent.
+// Seules les tailles > 0 comptent (une taille nulle/absente n'est pas un ménage
+// d'une personne : c'est une taille non renseignée).
+// Copie fidèle de rapport_core._taille_stats (test_agrege.py vérifie l'égalité).
+function tailleStats(ms){
+  const t = ms.map(m=>m.taille).filter(v=>v>0);
+  const n = t.length;
+  if(!n) return {nTaille:0, nbPersonnes:0, tailleMoy:0, tailleEt:0, tailleCv:0};
+  const somme = t.reduce((s,v)=>s+v,0);
+  const moy = somme/n;
+  const varr = t.reduce((s,v)=>s+(v-moy)*(v-moy),0)/n;
+  const et = Math.sqrt(varr);
+  return {nTaille:n, nbPersonnes:somme, tailleMoy:r2(moy), tailleEt:r2(et),
+          tailleCv: moy ? r1(100*et/moy) : 0};
+}
+function majTailleKpi(st){
+  document.getElementById('kpi-taille').textContent = st.nTaille ? num2(st.tailleMoy) : '—';
+  document.getElementById('kpi-taille-sub').textContent = st.nTaille
+    ? ('écart-type ' + num2(st.tailleEt) + ' · CV ' + num1(st.tailleCv) + ' %'
+       + ' · ' + st.nbPersonnes + ' personnes')
+    : '';
+}
 function formatDate(d){ if(!isValidDate(d)) return '—'; return `${d.slice(6,8)}/${d.slice(4,6)}/${d.slice(0,4)}`; }
-function hasCarnet(m){ return m.carnet===1 || m.carnet===2; }
+
+// ── Questions retirées du questionnaire (sept. 2026) ───────────────────────
+// Le CARNET e-Fokontany n'est plus collecté : tout ce qui s'y rapportait a été
+// RETIRÉ du tableau de bord (KPI, graphiques, colonnes de tableaux, export CSV).
+// L'électrification (`indication`) n'est plus collectée non plus, mais son bloc
+// reste affiché avec « n/d » : un 0 se lirait comme un résultat. ELEC_DISPO est
+// injecté par rapport_core ; l'exe historique n'injecte rien -> `true`.
+const ND = 'n/d';
+const _elecOk = (typeof ELEC_DISPO   === 'undefined') ? true : ELEC_DISPO;
+function chartND(id, titre){
+  // Remplace un graphique sans source de données par une note explicite.
+  const c = document.getElementById(id);
+  if(!c) return;
+  const d = document.createElement('div');
+  d.className = 'chart-nd';
+  d.textContent = titre + ' : donnée non collectée par le questionnaire en cours.';
+  c.replaceWith(d);
+}
 function fktDisplay(m){ return (m.fkt && m.fkt.trim()) ? m.fkt : (m.fktcode||'(fokontany inconnu)'); }
 function communeOf(m){ return (m.commune && m.commune.trim()) ? m.commune : '(commune inconnue)'; }
 function escJs(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
@@ -84,13 +127,12 @@ MENAGES.forEach(m=>{
   const key = m.sid+'|'+fc;   // 1 tranche par (segment, fokontany)
   if(!segMap.has(key)){
     segMap.set(key, {sid:m.sid, agent:m.agent, region:m.region, district:m.district, commune:communeOf(m),
-      fkt:m.fkt, fktcode:fc, seg:m.seg, statut:m.statut, rejet:m.rejet, tps:m.tps, bats:new Set(), n:0, nPresent:0, nCarnet:0,
+      fkt:m.fkt, fktcode:fc, seg:m.seg, statut:m.statut, rejet:m.rejet, tps:m.tps, bats:new Set(), n:0, nPresent:0,
       lats:[], lons:[]});
   }
   const s = segMap.get(key);
   s.n++;
   if(m.presence===1) s.nPresent++;
-  if(hasCarnet(m)) s.nCarnet++;
   if(m.bat) s.bats.add(m.bat);
   if(m.lat && Math.abs(m.lat)<90 && m.lon && Math.abs(m.lon)<180){ s.lats.push(m.lat); s.lons.push(m.lon); }
 });
@@ -362,12 +404,11 @@ function renderGeneralAgg(g){
   const total = g.total;
   document.getElementById('kpi-total').textContent    = total;
   document.getElementById('kpi-presents').textContent = g.nbPresents;
-  document.getElementById('kpi-carnet').textContent   = g.nbCarnet;
+  majTailleKpi(g);
   document.getElementById('kpi-segments').textContent = g.nbSegments;
   document.getElementById('kpi-tps').textContent      = g.tps;
   document.getElementById('kpi-total-sub').textContent    = g.nAgents+' agents actifs';
   document.getElementById('kpi-presents-pct').textContent = pct(g.nbPresents,total)+'%';
-  document.getElementById('kpi-carnet-pct').textContent   = pct(g.nbCarnet,total)+'%';
   document.getElementById('kpi-batiments-sub').textContent= g.nbBat+' bâtiments';
 
   const labels = g.dates.map(d=>formatDate(d));
@@ -392,12 +433,6 @@ function renderGeneralAgg(g){
     options:{responsive:true,maintainAspectRatio:false,cutout:'68%',
       plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:14}}}}
   });
-  mkChart('chart-donut-carnet',{ type:'doughnut',
-    data:{labels:[1,2,3,4].map(c=>CARNET_LABEL[c]),datasets:[{data:g.carnet,
-      backgroundColor:[1,2,3,4].map(c=>CARNET_COLOR[c]),borderWidth:0,hoverOffset:6}]},
-    options:{responsive:true,maintainAspectRatio:false,cutout:'68%',
-      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12}}}}
-  });
   document.getElementById('general-agent-blocks').style.display='none';
 }
 
@@ -420,19 +455,17 @@ function renderGeneral(f){
   document.getElementById('general-scope').textContent = scopeLabel(f);
 
   const nbPresents = ms.filter(m=>m.presence===1).length;
-  const nbCarnet   = ms.filter(hasCarnet).length;
   const tpsArr     = segs.filter(s=>s.tps>0).map(s=>s.tps);
   const nbBat      = new Set(ms.map(m=>m.sid+'-'+m.bat)).size;
 
   document.getElementById('kpi-total').textContent       = total;
   document.getElementById('kpi-presents').textContent    = nbPresents;
-  document.getElementById('kpi-carnet').textContent      = nbCarnet;
+  majTailleKpi(tailleStats(ms));
   document.getElementById('kpi-segments').textContent    = segs.length;
   document.getElementById('kpi-tps').textContent         = avg(tpsArr);
 
   document.getElementById('kpi-total-sub').textContent    = localAgents.length+' agents actifs';
   document.getElementById('kpi-presents-pct').textContent = pct(nbPresents,total)+'%';
-  document.getElementById('kpi-carnet-pct').textContent   = pct(nbCarnet,total)+'%';
   document.getElementById('kpi-batiments-sub').textContent= nbBat+' bâtiments';
 
   // ── Graphiques agrégés (visibles à tous les niveaux) ──
@@ -471,15 +504,6 @@ function renderGeneral(f){
       plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:14}}}}
   });
 
-  mkChart('chart-donut-carnet',{
-    type:'doughnut',
-    data:{labels:[1,2,3,4].map(c=>CARNET_LABEL[c]),
-      datasets:[{data:[1,2,3,4].map(c=>ms.filter(m=>m.carnet===c).length),
-        backgroundColor:[1,2,3,4].map(c=>CARNET_COLOR[c]),borderWidth:0,hoverOffset:6}]},
-    options:{responsive:true,maintainAspectRatio:false,cutout:'68%',
-      plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12}}}}
-  });
-
   // ── Statistiques individuelles par agent : uniquement au niveau fokontany ──
   const agentBlocks = document.getElementById('general-agent-blocks');
   agentBlocks.style.display = isFkt ? 'block' : 'none';
@@ -491,7 +515,6 @@ function renderGeneral(f){
       datasets:[
         {label:'Total',        data:localAgents.map(a=>ms.filter(m=>m.agent===a).length),                       backgroundColor:'#3b82f680',borderColor:'#3b82f6',borderWidth:2},
         {label:'Présents',     data:localAgents.map(a=>ms.filter(m=>m.agent===a&&m.presence===1).length),        backgroundColor:'#10b98180',borderColor:'#10b981',borderWidth:2},
-        {label:'Avec carnet',  data:localAgents.map(a=>ms.filter(m=>m.agent===a&&hasCarnet(m)).length),          backgroundColor:'#f59e0b80',borderColor:'#f59e0b',borderWidth:2},
       ]},
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12}}},
@@ -535,7 +558,8 @@ function renderAgentSection(f){
   const placeholder = document.getElementById('agent-placeholder');
   const results = document.getElementById('agent-results');
   const summary = document.getElementById('agent-summary');
-  if(!f || f.none){ placeholder.style.display='block'; results.style.display='none'; summary.style.display='none'; return; }
+  const ecart   = document.getElementById('agent-ecart');
+  if(!f || f.none){ placeholder.style.display='block'; results.style.display='none'; summary.style.display='none'; ecart.style.display='none'; return; }
   placeholder.style.display='none';
 
   // Base / commune : tableau récapitulatif des agents (pas de détail individuel).
@@ -543,10 +567,12 @@ function renderAgentSection(f){
     results.style.display='none';
     summary.style.display='block';
     renderAgentSummary(f);
+    renderEcartDeclaration();
     return;
   }
   // Fokontany : détail individuel (onglets + graphiques par agent).
   summary.style.display='none';
+  ecart.style.display='none';
   results.style.display='block';
 
   const segs = segsForFilter(f);
@@ -581,21 +607,130 @@ function renderAgentSummary(f){
         const am  = ms.filter(m=>m.agent===a);
         const asg = segs.filter(s=>s.agent===a);
         const pres= am.filter(m=>m.presence===1).length;
-        const carn= am.filter(hasCarnet).length;
         const tps = avg(asg.filter(s=>s.tps>0).map(s=>s.tps));
         return `<tr>
           <td><strong>${a}</strong></td>
           <td style="font-family:'JetBrains Mono',monospace">${am.length}</td>
           <td style="font-family:'JetBrains Mono',monospace">${asg.length}</td>
           <td>${pct(pres,am.length)}%</td>
-          <td>${pct(carn,am.length)}%</td>
           <td style="font-family:'JetBrains Mono',monospace">${tps||'—'}</td>
         </tr>`;
       }).join('')
-    : `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:30px">Aucun agent pour cette sélection.</td></tr>`;
+    : `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px">Aucun agent pour cette sélection.</td></tr>`;
 
   document.getElementById('agent-summary-count').textContent =
     `${agents.length} agent(s) · choisissez un fokontany pour le détail individuel de chaque agent`;
+}
+
+function toggleEcartDetail(i){
+  const tr = document.getElementById('ecart-detail-'+i);
+  const fl = document.getElementById('ecart-fleche-'+i);
+  if(!tr) return;
+  const ouvert = tr.style.display !== 'none';
+  tr.style.display = ouvert ? 'none' : 'table-row';
+  if(fl) fl.textContent = ouvert ? '▸' : '▾';
+}
+
+// ── Écart entre ce que l'agent DÉCLARE et ce qui ARRIVE AU SERVEUR ───────
+// ECART_DECL est calculé côté serveur sur le PÉRIMÈTRE ENTIER (rapport_core.
+// ecart_declaration) : la déclaration de l'agent est journalière et globale,
+// elle ne se ventile pas par commune ni par fokontany. Absent (rapport
+// hors-ligne, ou page commune/fokontany) -> on affiche le rappel à la place.
+function renderEcartDeclaration(){
+  const bloc = document.getElementById('agent-ecart');
+  const hint = document.getElementById('agent-ecart-hint');
+  const injecte = (typeof ECART_DECL !== 'undefined') && !!ECART_DECL;
+  // Sans AUCUNE déclaration saisie, le tableau ne dirait que « — » : on l'annonce
+  // en une phrase au lieu d'afficher des colonnes vides.
+  const dispo = injecte && Array.isArray(ECART_DECL.agents)
+                && (ECART_DECL.total||{}).declarants > 0;
+  bloc.style.display = dispo ? 'block' : 'none';
+  // Le rappel n'a de sens que dans le tableau de bord web (une page par périmètre) :
+  // il renvoie à la page « Par agent » du district, seul niveau où l'écart se calcule.
+  const web = (typeof ACTIVE_SECTION !== 'undefined');
+  if(hint){
+    hint.style.display = (!dispo && web) ? 'block' : 'none';
+    if(!dispo && web) hint.innerHTML = injecte
+      ? `<strong>Aucune déclaration d'agent n'a encore été saisie pour ce périmètre</strong> : l'écart entre ce qui est <em>déclaré</em> et ce qui <em>arrive au serveur</em> ne peut pas être calculé. Ces déclarations sont saisies par le <strong>Superviseur Technique</strong> (« Déclaration des agents »).`
+      : `L'<strong>écart entre ce que l'agent déclare et ce qui arrive au serveur</strong> se lit sur la page <a href="${NAV_BASE}/agent"><strong>« Par agent » du district</strong></a> : la déclaration de l'agent est <em>journalière et globale</em> (toutes zones confondues), elle ne se ventile ni par commune ni par fokontany.`;
+  }
+  if(!dispo) return;
+
+  const ags = ECART_DECL.agents, t = ECART_DECL.total || {};
+  const val = v => (v===null || v===undefined) ? '—' : v;
+  const signe = v => (v===null || v===undefined) ? '—' : (v>0 ? '+'+v : String(v));
+  const couleur = v => (v===null || v===undefined) ? 'var(--muted)'
+                     : (v>0 ? 'var(--danger)' : (v<0 ? 'var(--warning)' : 'var(--success)'));
+
+  document.getElementById('ecart-note').innerHTML =
+    `<strong>Écart = déclaré − reçu.</strong> « Déclaré » = ce que l'agent dit avoir dénombré chaque jour (saisi par le Superviseur Technique) ; « reçu » = ce qui est réellement arrivé au serveur. Un écart <strong>positif</strong> signale qu'il est arrivé <strong>moins</strong> que déclaré (synchronisation en retard, ou sur-déclaration) ; un écart <strong>négatif</strong>, qu'il est arrivé <strong>plus</strong> que déclaré. « — » : aucune déclaration saisie pour cet agent (ce n'est pas un zéro). Calculé sur <strong>tout le périmètre</strong> et sur les seuls ménages datés.`;
+
+  document.getElementById('ecart-kpi-dec').textContent = t.declare!=null ? t.declare : '—';
+  document.getElementById('ecart-kpi-dec-sub').textContent =
+    `${t.declarants||0} agent(s) ayant déclaré`;
+  document.getElementById('ecart-kpi-rec').textContent = t.recu!=null ? t.recu : '—';
+  document.getElementById('ecart-kpi-rec-sub').textContent =
+    `${t.agents||0} agent(s) au total`;
+  const kpiE = document.getElementById('ecart-kpi-ecart');
+  kpiE.textContent = signe(t.ecart);
+  kpiE.style.color = couleur(t.ecart);
+  document.getElementById('ecart-kpi-pct').textContent =
+    (t.pct==null ? 'aucune déclaration saisie' : `${num1(t.pct)} % du déclaré`);
+
+  // Une ligne par agent ; au clic, le DÉTAIL PAR DATE se déplie sous la ligne
+  // (mêmes chiffres que la feuille « Écart déclaration-serveur » de l'export).
+  document.getElementById('ecart-tbody').innerHTML = ags.map((a,i)=>{
+    // Détail par date : seulement pour un agent qui a déclaré (sinon la ligne
+    // n'est pas dépliable — il n'y aurait que des « — »).
+    const jours = a.detail || [];
+    return `<tr ${jours.length ? `onclick="toggleEcartDetail(${i})" style="cursor:pointer" title="Afficher le détail par date"` : ''}>
+    <td>${jours.length ? `<span id="ecart-fleche-${i}" style="color:var(--muted)">▸</span> ` : ''}<strong>${a.agent}</strong></td>
+    <td>${a.chef || '—'}</td>
+    <td style="font-family:'JetBrains Mono',monospace">${a.joursDeclares||'—'}</td>
+    <td style="font-family:'JetBrains Mono',monospace">${val(a.declare)}</td>
+    <td style="font-family:'JetBrains Mono',monospace">${a.recu}</td>
+    <td style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${couleur(a.ecart)}">${signe(a.ecart)}</td>
+    <td>${a.pct==null ? '—' : num1(a.pct)+' %'}</td>
+  </tr>` + (!jours.length ? '' : `
+  <tr id="ecart-detail-${i}" style="display:none"><td colspan="7" style="background:rgba(37,99,235,0.04);padding:10px 22px">
+    <table style="width:100%">
+      <thead><tr><th>Date</th><th>Ménages déclarés</th><th>Ménages reçus</th><th>Écart</th></tr></thead>
+      <tbody>${jours.map(j=>`<tr>
+        <td>${formatDate(j.d)}</td>
+        <td style="font-family:'JetBrains Mono',monospace">${val(j.dec)}</td>
+        <td style="font-family:'JetBrains Mono',monospace">${j.rec}</td>
+        <td style="font-family:'JetBrains Mono',monospace;color:${couleur(j.ecart)}">${signe(j.ecart)}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+  </td></tr>`);
+  }).join('');
+  document.getElementById('ecart-count').textContent =
+    `${t.agents||0} agent(s) · ${t.declarants||0} avec déclaration saisie · `
+    + `${t.sansDeclaration||0} avec des données reçues mais AUCUNE déclaration`;
+
+  // Graphique : les 12 plus gros écarts (en valeur absolue), déclarants seuls.
+  const top = ags.filter(a=>a.ecart!==null && a.ecart!==undefined)
+                 .slice().sort((x,y)=>Math.abs(y.ecart)-Math.abs(x.ecart)).slice(0,12);
+  const card = document.getElementById('ecart-chart-card');
+  if(agentCharts['chart-ecart-agent']){ agentCharts['chart-ecart-agent'].destroy(); delete agentCharts['chart-ecart-agent']; }
+  if(!top.length){ card.style.display='none'; return; }
+  card.style.display='block';
+  document.getElementById('ecart-chart-sub').textContent =
+    `déclaré − reçu au serveur · ${top.length} plus grands écarts`;
+  agentCharts['chart-ecart-agent'] = new Chart(document.getElementById('chart-ecart-agent'),{
+    type:'bar',
+    data:{labels: top.map(a=>a.agent),
+      datasets:[{label:'Écart (ménages)', data: top.map(a=>a.ecart),
+        backgroundColor: top.map(a=>a.ecart>0?'#ef4444':(a.ecart<0?'#f59e0b':'#10b981')),
+        borderRadius:5}]},
+    options:{indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{afterLabel:(c)=>{
+          const a = top[c.dataIndex];
+          return `déclaré ${a.declare} · reçu ${a.recu}`;
+        }}}},
+      scales:{x:{beginAtZero:true}}}
+  });
 }
 
 function renderAgentPage(a, f){
@@ -603,16 +738,14 @@ function renderAgentPage(a, f){
   const segs = segsForFilter(f).filter(s=>s.agent===a);
   const total= ms.length;
   const pres = ms.filter(m=>m.presence===1).length;
-  const carn = ms.filter(hasCarnet).length;
   const tps  = avg(segs.filter(s=>s.tps>0).map(s=>s.tps));
   const aDates = [...new Set(ms.map(m=>m.date))].sort();
 
   const cont = document.getElementById('agent-content');
   cont.innerHTML = `
-    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
       <div class="kpi-card blue"><div class="kpi-label">Ménages</div><div class="kpi-value">${total}</div></div>
       <div class="kpi-card green"><div class="kpi-label">Présents</div><div class="kpi-value">${pres}</div><div class="kpi-sub">${pct(pres,total)}%</div></div>
-      <div class="kpi-card yellow"><div class="kpi-label">Avec carnet</div><div class="kpi-value">${carn}</div><div class="kpi-sub">${pct(carn,total)}%</div></div>
       <div class="kpi-card blue"><div class="kpi-label">Tps moyen</div><div class="kpi-value">${tps}</div><div class="kpi-sub">minutes / segment</div></div>
     </div>
     <div class="charts-grid">
@@ -629,13 +762,12 @@ function renderAgentPage(a, f){
       <div class="table-toolbar"><div class="table-title">Segments traités par ${a}</div></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Fokontany</th><th>Segment</th><th>Ménages</th><th>% Présents</th><th>% Carnet</th><th>Tps (min)</th><th>Statut</th></tr></thead>
+          <thead><tr><th>Fokontany</th><th>Segment</th><th>Ménages</th><th>% Présents</th><th>Tps (min)</th><th>Statut</th></tr></thead>
           <tbody>${segs.map(s=>`<tr>
             <td>${s.fkt||s.fktcode||'—'}</td>
             <td>${s.seg}</td>
             <td style="font-family:'JetBrains Mono',monospace">${s.n}</td>
             <td>${pct(s.nPresent,s.n)}%</td>
-            <td>${pct(s.nCarnet,s.n)}%</td>
             <td style="font-family:'JetBrains Mono',monospace">${s.tps||'—'}</td>
             <td>${s.statut===120?'<span class="pill pill-acheve">Validé</span>':'<span class="pill pill-inacheve">Complété</span>'}</td>
           </tr>`).join('')}</tbody>
@@ -682,7 +814,6 @@ function renderZoneTable(){
     <td style="font-family:'JetBrains Mono',monospace">${s.n}</td>
     <td style="font-family:'JetBrains Mono',monospace">${s.bats.size}</td>
     <td>${pct(s.nPresent,s.n)}%</td>
-    <td>${pct(s.nCarnet,s.n)}%</td>
     <td style="font-family:'JetBrains Mono',monospace">${s.tps||'—'}</td>
   </tr>`).join('');
   document.getElementById('zone-count').textContent = `${rows.length} / ${SEGMENTS.length} segments`;
@@ -907,15 +1038,11 @@ function renderGpsSection(f){
 //  QUALITÉ DES DONNÉES  (vue d'ensemble)
 // ══════════════════════════════════════════════════════════════════
 function initQualite(){
-  mkChart('qual-carnet',{type:'doughnut',
-    data:{labels:[1,2,3,4].map(c=>CARNET_LABEL[c]),
-      datasets:[{data:[1,2,3,4].map(c=>MENAGES.filter(m=>m.carnet===c).length),backgroundColor:[1,2,3,4].map(c=>CARNET_COLOR[c]),borderWidth:0,hoverOffset:6}]},
-    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{boxWidth:10}}}}});
-
   mkChart('qual-presence',{type:'doughnut',
     data:{labels:['Présent','Absent'],datasets:[{data:[MENAGES.filter(m=>m.presence===1).length,MENAGES.filter(m=>m.presence===2).length],backgroundColor:['#10b981','#ef4444'],borderWidth:0,hoverOffset:6}]},
     options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom'}}}});
 
+  if(!_elecOk){ chartND('qual-elec','Électrification'); } else
   mkChart('qual-elec',{type:'doughnut',
     data:{labels:['Oui','Non'],datasets:[{data:[MENAGES.filter(m=>m.elec===1).length,MENAGES.filter(m=>m.elec===2).length],backgroundColor:['#f59e0b','#64748b'],borderWidth:0,hoverOffset:6}]},
     options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom'}}}});
@@ -923,6 +1050,13 @@ function initQualite(){
   const tailles = MENAGES.map(m=>m.taille).filter(t=>t>0);
   const maxT = Math.min(Math.max(...tailles,0),15);
   const bins = Array.from({length:maxT},(_, i)=>i+1);
+  // Sous-titre : moyenne et écart-type, sous l'histogramme des tailles.
+  const _stT = tailleStats(MENAGES);
+  const _subT = document.getElementById('qual-taille-sub');
+  if(_subT) _subT.textContent = _stT.nTaille
+    ? `Moyenne ${num2(_stT.tailleMoy)} · écart-type ${num2(_stT.tailleEt)} · `
+      + `CV ${num1(_stT.tailleCv)} % · ${_stT.nTaille} ménage(s) renseigné(s)`
+    : 'Nombre de membres déclarés';
   mkChart('qual-taille',{type:'bar',
     data:{labels:bins.map(b=>b===maxT?`${b}+`:String(b)),
       datasets:[{label:'Ménages', data:bins.map(b=> b===maxT ? tailles.filter(t=>t>=b).length : tailles.filter(t=>t===b).length), backgroundColor:'#2563eb',borderRadius:5}]},
@@ -972,11 +1106,15 @@ function initHistorique(){
 
 // ══════════════════════════════════════════════════════════════════
 //  SEGMENTS MULTIPLES  (drill-down Commune -> Fokontany)
-//  Un segment est "multiple" quand le même code de segment se répète
-//  plus d'une fois dans le fokontany d'après DEN_MENAGE.
-//  On compte donc les lignes de SEGMENTS_DEN (1 ligne = 1 segment
-//  dénombré) et non les segments reconstruits depuis les ménages :
-//  un segment sans aucune ligne dans segment_roster doit être compté.
+//  Un segment est "multiple" quand UN MÊME AGENT dénombre plus d'une
+//  fois LE MÊME CODE DE SEGMENT DANS UN MÊME FOKONTANY (d'après
+//  DEN_MENAGE). Clé = (fokontany, code, agent).
+//  Deux agents DIFFÉRENTS qui font chacun le S01 d'un même fokontany
+//  ne sont PAS un segment multiple : c'est un partage de travail, pas
+//  un doublon (règle révisée le 2026-09-17).
+//  On compte les lignes de SEGMENTS_DEN (1 ligne = 1 segment dénombré)
+//  et non les segments reconstruits depuis les ménages : un segment
+//  sans aucune ligne dans segment_roster doit être compté.
 // ══════════════════════════════════════════════════════════════════
 const SEG_DEN = (typeof SEGMENTS_DEN !== 'undefined') ? SEGMENTS_DEN : [];
 
@@ -1007,16 +1145,18 @@ function renderMultiSection(f){
     else if(f && f.commune) lignes = SEG_DEN.filter(s=> s.commune===f.commune);
   }
 
-  // Détection PAR FOKONTANY : un code de segment (S01, S02…) n'est unique qu'AU SEIN
-  // d'un fokontany. Clé = (fokontany, code) -> on ne mélange pas les S01 de fokontany
-  // différents quand on agrège en commune/district.
+  // Détection PAR (FOKONTANY, CODE, AGENT) : un code de segment (S01, S02…) n'est
+  // unique qu'AU SEIN d'un fokontany -> on ne mélange pas les S01 de fokontany
+  // différents ; et l'AGENT fait partie de la clé -> deux agents sur le même code
+  // ne comptent pas, seule la répétition PAR UN MÊME AGENT est un doublon.
   const groups = new Map();
   lignes.forEach(s=>{
     const fk   = (s.fktcode && String(s.fktcode).trim()) ? String(s.fktcode).trim() : '(fkt manquant)';
     const code = (s.seg && String(s.seg).trim()) ? String(s.seg).trim() : '(code manquant)';
-    const key  = fk+''+code;
-    if(!groups.has(key)) groups.set(key, {fk, code, n:0, agents:new Set()});
-    const g = groups.get(key); g.n++; if(s.agent) g.agents.add(s.agent);
+    const agent = (s.agent && String(s.agent).trim()) ? String(s.agent).trim() : '(agent inconnu)';
+    const key  = fk+''+code+''+agent;
+    if(!groups.has(key)) groups.set(key, {fk, code, agent, n:0});
+    groups.get(key).n++;
   });
   const mult = [...groups.values()].filter(g=>g.n>1);
 
@@ -1026,40 +1166,41 @@ function renderMultiSection(f){
 
   if(level==='fokontany'){
     if(title) title.textContent = '🔢 Segments multiples du fokontany';
-    if(thead) thead.innerHTML = '<tr><th>Segment</th><th>Nombre</th><th>Agents concernés</th></tr>';
-    const rows = mult.sort((a,b)=> b.n-a.n || a.code.localeCompare(b.code,'fr'));
+    if(thead) thead.innerHTML = '<tr><th>Segment</th><th>Agent</th><th>Nombre de fois dénombré</th></tr>';
+    const rows = mult.sort((a,b)=> b.n-a.n || a.code.localeCompare(b.code,'fr')
+      || a.agent.localeCompare(b.agent,'fr'));
     tbody.innerHTML = rows.length
       ? rows.map(g=>`<tr>
           <td><strong style="font-family:'JetBrains Mono',monospace">${g.code}</strong></td>
+          <td style="font-size:11px">${g.agent}</td>
           <td><span class="kpi-badge badge-down" style="font-family:'JetBrains Mono',monospace">${g.n}</span></td>
-          <td style="font-size:11px">${[...g.agents].sort().join(', ')||'—'}</td>
         </tr>`).join('')
       : `<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:30px">✅ Aucun segment multiple dans ce fokontany</td></tr>`;
-    const nbCodes = new Set(lignes.map(s=> (s.seg&&String(s.seg).trim())?String(s.seg).trim():'(code manquant)')).size;
     document.getElementById('multi-count').textContent =
-      `${rows.length} segment(s) multiple(s) sur ${nbCodes} code(s) distinct(s) · ${lignes.length} segment(s) dénombré(s) dans ce fokontany (DEN_MENAGE)`;
+      `${rows.length} cas sur ${groups.size} couple(s) segment × agent · ${lignes.length} segment(s) dénombré(s) dans ce fokontany (DEN_MENAGE)`;
   } else {
     // Commune / District : AGRÉGATION par fokontany (1 ligne par (fokontany, segment)).
     const fktLabel = new Map();
     (typeof NAV_TREE!=='undefined' ? NAV_TREE : []).forEach(z=> fktLabel.set(z.fkt, z.label));
     if(title) title.textContent = (level==='commune')
       ? '🔢 Segments multiples de la commune' : '🔢 Segments multiples du district';
-    if(thead) thead.innerHTML = '<tr><th>Fokontany</th><th>Segment</th><th>Nombre</th><th>Agents concernés</th></tr>';
+    if(thead) thead.innerHTML = '<tr><th>Fokontany</th><th>Segment</th><th>Agent</th><th>Nombre de fois dénombré</th></tr>';
     const rows = mult.sort((a,b)=>
       (fktLabel.get(a.fk)||a.fk).localeCompare(fktLabel.get(b.fk)||b.fk,'fr')
-      || b.n-a.n || a.code.localeCompare(b.code,'fr'));
+      || b.n-a.n || a.code.localeCompare(b.code,'fr')
+      || a.agent.localeCompare(b.agent,'fr'));
     tbody.innerHTML = rows.length
       ? rows.map(g=>`<tr>
           <td style="font-size:11px">${fktLabel.get(g.fk)||g.fk}</td>
           <td><strong style="font-family:'JetBrains Mono',monospace">${g.code}</strong></td>
+          <td style="font-size:11px">${g.agent}</td>
           <td><span class="kpi-badge badge-down" style="font-family:'JetBrains Mono',monospace">${g.n}</span></td>
-          <td style="font-size:11px">${[...g.agents].sort().join(', ')||'—'}</td>
         </tr>`).join('')
       : `<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:30px">✅ Aucun segment multiple dans ce périmètre</td></tr>`;
     const nbFkt = new Set(mult.map(g=>g.fk)).size;
     const portee = (level==='commune') ? 'cette commune' : 'ce district';
     document.getElementById('multi-count').textContent =
-      `${rows.length} segment(s) multiple(s) dans ${nbFkt} fokontany · ${lignes.length} segment(s) dénombré(s) dans ${portee} (DEN_MENAGE)`;
+      `${rows.length} cas dans ${nbFkt} fokontany · ${lignes.length} segment(s) dénombré(s) dans ${portee} (DEN_MENAGE)`;
   }
 }
 
@@ -1116,8 +1257,8 @@ function renderGpsCaptureSection(f){
 //  EXPORT CSV (liste complète des ménages)
 // ══════════════════════════════════════════════════════════════════
 function exportCSV(){
-  const headers = ['Code den.','Chef de ménage','Agent','Commune','Fokontany','Segment','Date','Carnet','Présence','Tps segment (min)','Latitude','Longitude','Adresse'];
-  const rows = MENAGES.map(m=>[m.id,m.nom,m.agent,communeOf(m),fktDisplay(m),m.seg,m.date,CARNET_LABEL[m.carnet]||'',PRESENCE_LABEL[m.presence]||'',m.tps,m.lat,m.lon,m.adresse]);
+  const headers = ['Code den.','Chef de ménage','Agent','Commune','Fokontany','Segment','Date','Présence','Tps segment (min)','Latitude','Longitude','Adresse'];
+  const rows = MENAGES.map(m=>[m.id,m.nom,m.agent,communeOf(m),fktDisplay(m),m.seg,m.date,PRESENCE_LABEL[m.presence]||'',m.tps,m.lat,m.lon,m.adresse]);
   const csv = [headers,...rows].map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join(String.fromCharCode(10));
   const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);

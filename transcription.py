@@ -40,18 +40,25 @@ def _table_bilan(tables, titres) -> str:
             f'<th>{a}</th><th>{m}</th><th>{i}</th></tr>' + rows + '</table>')
 
 
-def _table_historique(historique) -> str:
-    """Tableau de l'historique des transcriptions (date+heure, événement, statut)."""
+def _table_historique(historique, vide="Aucune opération enregistrée pour "
+                                        "l’instant.") -> str:
+    """Historique d'UNE phase pour l'utilisateur courant (date, opération, issue).
+
+    La colonne District dit sur quel district a porté l'opération : l'Expert n'en
+    a qu'un, mais une réaffectation laisse ici la trace de l'ancien. La pastille
+    est verte dès que le statut n'est pas « Échec » (cf. journal.reussi)."""
     if not historique:
-        return ('<p><small>Aucune opération enregistrée pour l’instant.</small></p>')
+        return f'<p><small>{ESC(vide)}</small></p>'
     rows = "".join(
         f'<tr><td>{ESC(x["quand_court"])}</td>'
-        f'<td>{ESC(x["evenement"])}</td>'
-        f'<td><span class="pill {"ok" if x["statut"] == "Réussi" else "ko"}">'
+        f'<td>{ESC(x["district_txt"])}</td>'
+        f'<td>{ESC(x["evenement_court"])}</td>'
+        f'<td><span class="pill {"ok" if x["reussi"] else "ko"}">'
         f'{ESC(x["statut"])}</span></td>'
         f'<td>{ESC(x["detail"])}</td></tr>' for x in historique)
-    return ('<table><tr><th>Date &amp; heure</th><th>Opération</th>'
-            '<th>Statut</th><th>Détail</th></tr>' + rows + '</table>')
+    return ('<table><tr><th>Date &amp; heure</th><th>District</th>'
+            '<th>Opération</th><th>Statut</th><th>Détail</th></tr>'
+            + rows + '</table>')
 
 
 _CSS_CHOIX = """
@@ -77,19 +84,33 @@ _CSS_CHOIX = """
 
 def page_choix_transcription(district_txt) -> str:
     """Choix de l'Expert survey : transcription Dénombrement ou Visite à domicile."""
-    h = [_entete(), _CSS_CHOIX, '<h1>Transcription des données</h1>',
+    h = [_entete(), _CSS_CHOIX, '<h1>Espace Expert survey</h1>',
          f'<div class="note">District d’affectation : <b>{ESC(district_txt)}</b>. '
-         'Choisissez le type de données à transcrire.</div>',
+         'Vous transcrivez les données des <b>deux phases</b> de la collecte, et '
+         'vous pouvez consulter les <b>tableaux de bord</b> qui en découlent.</div>',
          '<div class="choix">',
          '<a class="ca" href="/transcription/denombrement">'
          '<div class="ic">📋</div><div class="t">Transcription — Dénombrement</div>'
          '<div class="d">Téléverser puis transcrire les fichiers .dta du '
          'dénombrement (DEN_MENAGE, segment_roster, interview__diagnostics).</div>'
          '<div class="go">Ouvrir →</div></a>',
-         '<a class="ca off" href="/transcription/vad">'
+         '<a class="ca" href="/transcription/vad">'
          '<div class="ic">🏠</div><div class="t">Transcription — Visite à domicile</div>'
-         '<div class="d">Transcription des données de visite à domicile (VAD).</div>'
-         '<span class="ruban">En cours de conception</span></a>',
+         '<div class="d">Téléverser puis transcrire le dossier d’export du '
+         'questionnaire RSUe (ménages, membres, diagnostics) de la visite à '
+         'domicile.</div>'
+         '<div class="go">Ouvrir →</div></a>',
+         '<a class="ca" href="/choix">'
+         '<div class="ic">📊</div><div class="t">Tableau de bord — Dénombrement</div>'
+         '<div class="d">Consulter le rapport de suivi du dénombrement de votre '
+         'district : couverture, qualité, agents, zones, carte GPS.</div>'
+         '<div class="go">Ouvrir →</div></a>',
+         '<a class="ca" href="/vad/general">'
+         '<div class="ic">📈</div><div class="t">Tableau de bord — Visite à '
+         'domicile</div>'
+         '<div class="d">Suivre la VAD de votre district : avancement, '
+         'démographie, habitation, biens, eau et assainissement, erreurs.</div>'
+         '<div class="go">Ouvrir →</div></a>',
          '<a class="ca" href="/equipe">'
          '<div class="ic">👔</div><div class="t">Équipe technique</div>'
          '<div class="d">Consulter l’encadrement (Coordonnateur régional, '
@@ -142,6 +163,19 @@ def page_transcription(district_txt, apercu=None, resultat=None,
         h.append('<h2>Aperçu — rien n’est encore écrit</h2>')
         h.append(f'<div class="note">Fichiers reçus : '
                  f'<b>{ESC(", ".join(apercu.get("fichiers", [])))}</b></div>')
+        # Segments saisis hors du district de l'Expert : ils ne sont PAS transcrits.
+        # On le dit clairement, sinon il croirait tout importé et chercherait en vain
+        # les lignes manquantes.
+        n_ec = apercu.get("ecartes") or 0
+        if n_ec:
+            autres = ", ".join(str(x) for x in apercu.get("ecartes_districts", []))
+            h.append(
+                '<div class="note" style="background:#fff4d6;border-color:#f0d38a">'
+                f'<b>⚠ {n_ec} segment(s) écarté(s)</b> — ils sont enregistrés sur le(s) '
+                f'district(s) <b>{ESC(autres)}</b>, hors de votre affectation, et ne '
+                'seront donc pas transcrits. Le reste du dossier est pris en compte '
+                'normalement. Si ces segments sont de vraies collectes, faites corriger '
+                'le district dans Survey Solutions.</div>')
         h.append(_table_bilan(apercu["tables"], ("À ajouter", "À modifier", "Inchangées")))
         h.append('<form method="post" action="/transcription/transcrire" '
                  'style="margin-top:14px">'
@@ -167,7 +201,8 @@ def page_transcription(district_txt, apercu=None, resultat=None,
 
     # Historique des opérations de CET expert (téléversements + transcriptions,
     # réussis ou non), le plus récent d'abord.
-    h.append('<h2>Historique de mes transcriptions</h2>')
-    h.append(_table_historique(historique))
+    h.append('<h2>Historique — mes opérations de dénombrement</h2>')
+    h.append(_table_historique(
+        historique, "Aucun téléversement de dénombrement pour l’instant."))
     h.append('</div></body></html>')
     return "".join(h)
