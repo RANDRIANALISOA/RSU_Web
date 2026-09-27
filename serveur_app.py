@@ -3561,7 +3561,44 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    # MAINTENANCE : tant que le fichier `MAINTENANCE` existe à la racine du
+    # projet, TOUTE requête reçoit une page 503 « service suspendu » — aucune
+    # page, aucune donnée, aucun login. Interrupteur sans droits root : créer
+    # ou supprimer le fichier suffit, sans redémarrage (testé à chaque requête).
+    _FICHIER_MAINTENANCE = os.path.join(config.BASE, "MAINTENANCE")
+
+    def _en_maintenance(self) -> bool:
+        if not os.path.exists(self._FICHIER_MAINTENANCE):
+            return False
+        corps = ("<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\">"
+                 "<meta name=\"viewport\" content=\"width=device-width,"
+                 "initial-scale=1\"><title>RSU 2026 — service suspendu</title>"
+                 "<style>body{font-family:system-ui,sans-serif;background:#f0f2f7;"
+                 "color:#1e293b;display:flex;align-items:center;justify-content:"
+                 "center;min-height:100vh;margin:0}div{background:#fff;padding:"
+                 "2rem 2.5rem;border-radius:12px;box-shadow:0 4px 20px #0001;"
+                 "max-width:32rem;text-align:center}h1{font-size:1.3rem}</style>"
+                 "</head><body><div><h1>Application momentanément suspendue</h1>"
+                 "<p>L'application RSU 2026 est temporairement indisponible. "
+                 "Merci de réessayer ultérieurement.</p></div></body></html>"
+                 ).encode("utf-8")
+        self.send_response(503)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corps)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Retry-After", "3600")
+        # Le corps d'un POST n'est pas lu : on ferme la connexion plutôt que de
+        # laisser ce corps être relu comme une nouvelle requête.
+        self.send_header("Connection", "close")
+        self.close_connection = True
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(corps)
+        return True
+
     def do_GET(self):
+        if self._en_maintenance():
+            return
         brut = self.path.split("?", 1)[0]
         # Toute l'appli vit sous /rsu : on ramène les URL sans préfixe.
         if brut in ("/", ""):
@@ -3969,6 +4006,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return ("ok", acom)
 
     def do_POST(self):
+        if self._en_maintenance():
+            return
         brut = self.path.split("?", 1)[0]
         if not (brut == PREFIXE or brut.startswith(PREFIXE + "/")):
             self._html(page_erreur("Page inconnue.", 404), 404)
