@@ -6890,3 +6890,46 @@ fichier **`MAINTENANCE`** existe à la racine du projet, toute requête reçoit 
 Testé à chaque requête : **créer/supprimer le fichier suffit, sans redémarrage**. Fichier
 ignoré par Git. **ACTIVÉ le 2026-09-27 à 08:50** (processus relancé pour charger le code) ;
 vérifié 503 sur 127.0.0.1:8000 et via Apache (http/https). Réactiver : `rm MAINTENANCE`.
+
+## RETOUR sur rse.instat.mg : restauration depuis le VPS 5.135.244.23 (journal 2026-09-28)
+
+Chronologie : le 27/09 l'application a été **copiée** sur le VPS `5.135.244.23` (Debian,
+utilisateur `debian`), puis **suspendue** (interrupteur MAINTENANCE) et **supprimée** de
+`rse.instat.mg` (`/home/rse/rsu-web` effacé, 9,4 Go). L'architecture a été améliorée sur
+le VPS (plusieurs processus, pool SQLite en WAL, sessions en base — cf. sections
+précédentes). Le 28/09, **retour sur rse.instat.mg**, le VPS étant conservé comme
+**sauvegarde** (source NON modifiée, service arrêté sur le VPS par l'utilisateur).
+
+### Méthode (sans root sur rse.instat.mg)
+- Le service systemd `rsu-web` d'origine (root, `User=rse`, `/home/rse/rsu-web`) était
+  resté activé et tentait de redémarrer toutes les 3 s : il aurait démarré dès le retour
+  de `venv/bin/python`. D'où une **préparation dans `/home/rse/rsu-web.new`**, puis un
+  `mv` final → systemd a démarré tout seul la nouvelle version.
+- Fichiers : `rsync` depuis `debian@5.135.244.23:rsu-web/` (clé SSH en place), sans
+  `venv/`, `__pycache__/` ni la base (7 Go, 2 317 fichiers).
+- Base : **instantané cohérent** sur la source (API `backup` de SQLite, base en WAL,
+  `journal_mode=delete` sur la copie, `integrity_check` ok), refait juste avant le `mv`
+  (05:07 UTC) ; comptages identiques à la source, table par table.
+- venv recréé ici (Python 3.12). Ce CPU (Xeon Silver 4310) supporte x86-64-v2 : la
+  contrainte `numpy==1.26.4` de `requirements.txt` ne vaut que pour le VPS.
+- Testé sur une COPIE (port 8098) avant la mise en service ; puis 40 requêtes
+  simultanées via Apache → 200. **24 processus** (un par cœur, `RSU_PROCESSUS` absent de
+  l'unité systemd d'origine).
+
+### État des données
+Données de collecte **vides** (dénombrement, VAD, préchargement) : **nouveau départ
+voulu** par l'utilisateur. Conservés : 403 comptes, 960 agents, journaux, pièces jointes.
+
+### Git
+Nouvelle architecture commitée (`a2b07a2`), puis fusion avec `1dc516b` (interrupteur de
+maintenance, absent du VPS) : `_en_maintenance()` est testé en tête de `do_GET`/`do_POST`
+AVANT `_synchroniser_cache()`. `.gitignore` : `*.sqlite-*` (fichiers WAL), `*.avant-*`
+(copies manuelles), `deploy/backups/*.csv` (listes d'agents).
+
+### Rapport IA
+`LOGINS_RAPPORT_IA` = **{"COORDOREG_02"}** : COORDOREG_01 retiré (demande utilisateur).
+
+### Reste à faire (root)
+Unité systemd à mettre à jour : `PYTHONUNBUFFERED=1` (sinon les messages de l'application
+n'arrivent pas au journal) et éventuellement `RSU_PROCESSUS`. `/tmp/rsu_*` (2,8 Go, dont
+une copie de la base) a été supprimé le 28/09.

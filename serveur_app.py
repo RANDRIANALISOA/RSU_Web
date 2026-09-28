@@ -419,7 +419,8 @@ _ROLES_JOURNAL_LECTURE = utilisateurs.ROLES_JOURNAL_LECTURE
 # et télécharger le rapport rédigé par IA. La compilation HORS-LIGNE
 # (/rapport-mission) reste, elle, ouverte aux rôles de LECTURE ci-dessus. Pour
 # ouvrir l'accès à un autre compte (ex. un futur COORDOREG_03), l'ajouter ici.
-LOGINS_RAPPORT_IA = {"COORDOREG_01", "COORDOREG_02"}
+# COORDOREG_01 retiré le 2026-09-28 (demande utilisateur).
+LOGINS_RAPPORT_IA = {"COORDOREG_02"}
 
 
 def peut_rapport_ia(u) -> bool:
@@ -4662,7 +4663,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if districts is not None:
                     perim = {str(d) for d in districts}
                     tous = [d for d in tous if d["code"] in perim]
-                # Logins autorisés (COORDOREG_01/02) : « Générer le rapport » lance
+                # Logins autorisés (LOGINS_RAPPORT_IA) : « Générer le rapport » lance
                 # DIRECTEMENT le rapport Word IA (action -> /rapport-mission/ia). Les
                 # autres rôles de lecture obtiennent la compilation hors-ligne.
                 ia = peut_rapport_ia(u)
@@ -4683,7 +4684,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         params = {"debut": debut, "fin": fin}
         if district_f:
             params["district"] = district_f
-        # Bouton « rapport IA (Word) » RÉSERVÉ aux logins autorisés (COORDOREG_01/02).
+        # Bouton « rapport IA (Word) » RÉSERVÉ aux logins autorisés (LOGINS_RAPPORT_IA).
         ia_href = ("/rapport-mission/ia?" + urllib.parse.urlencode(params)
                    if peut_rapport_ia(u) else "")
         self._html(rapport_mission.rendu_html(
@@ -4691,7 +4692,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _rapport_mission_ia_get(self, sess):
         """GET /rapport-mission/ia : rapport RÉDIGÉ PAR IA (API Claude) livré en WORD.
-        Réservé aux LOGINS autorisés (COORDOREG_01/02), pas à un rôle. Affiche une page
+        Réservé aux LOGINS autorisés (LOGINS_RAPPORT_IA), pas à un rôle. Affiche une page
         de progression (streaming + heartbeats pour éviter le 504) puis, la rédaction
         finie, déclenche automatiquement le téléchargement du .docx (conversion du
         Markdown déjà produit, sans 2e appel IA). Périmètre borné comme
