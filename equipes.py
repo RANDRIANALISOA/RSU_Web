@@ -271,6 +271,27 @@ def synchroniser_agents(conn) -> int:
     return synchroniser_agents_detail(conn)["crees"]
 
 
+def agents_du_district(conn, districts) -> list:
+    """Codes (login_ae) de TOUS les agents rattachés à ce(s) district(s) par
+    `agent.district_ae`, qu'ils aient ou non des données. Sert à afficher dans
+    les tableaux « par agent » ceux qui n'ont encore rien fait (0 ménage).
+    `districts` : un code, ou un ensemble de codes ; None = tous les agents."""
+    creer_tables(conn)
+    ph = db_source._placeholder(conn)
+    cur = conn.cursor()
+    if districts is None:
+        cur.execute('SELECT "login_ae" FROM "agent"')
+    else:
+        codes = ((int(districts),) if isinstance(districts, (int, str))
+                 else tuple(int(d) for d in districts))
+        if not codes:
+            return []
+        cur.execute('SELECT "login_ae" FROM "agent" WHERE "district_ae" IN ('
+                    + ",".join([ph] * len(codes)) + ")", codes)
+    return sorted({str(c).strip() for (c,) in cur.fetchall()
+                   if c is not None and str(c).strip()})
+
+
 def noms_agents(conn) -> dict:
     """{code_agent: nom} pour les agents dont le nom est VRAIMENT renseigné
     (nom != code). Sert au rapport pour afficher le nom au lieu du code ; un code

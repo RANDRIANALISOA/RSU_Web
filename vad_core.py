@@ -1867,7 +1867,7 @@ def _sec_erreurs(menages, membres, diag):
     }
 
 
-def _sec_agents(menages, membres, diag):
+def _sec_agents(menages, membres, diag, agents_tous=()):
     memb = Counter(x["key"] for x in membres)
     par = defaultdict(lambda: {"n": 0, "membres": 0, "jours": set(),
                                "durees": [], "erreurs": 0})
@@ -1893,11 +1893,18 @@ def _sec_agents(menages, membres, diag):
             "taille": round(p["membres"] / p["n"], 2) if p["n"] else None,
             "anomalies": p["erreurs"],
         })
-    out.sort(key=lambda r: -r["menages"])
+    # Agents du périmètre SANS aucune interview : une ligne à 0.
+    for a in agents_tous:
+        if a not in par:
+            out.append({"agent": a, "menages": 0, "membres": 0, "jours": 0,
+                        "parJour": None, "duree": None, "taille": None,
+                        "anomalies": 0})
+    out.sort(key=lambda r: (-r["menages"], r["agent"]))
     return out
 
 
-def _sec_ecart_declaration(conn, menages, diag, codes, noms, descente=False):
+def _sec_ecart_declaration(conn, menages, diag, codes, noms, descente=False,
+                           agents_tous=()):
     """Écart, PAR AGENT, entre les ménages qu'il DÉCLARE avoir interviewés et
     ceux qui sont ARRIVÉS AU SERVEUR (table `vad_menage`).
 
@@ -1922,20 +1929,21 @@ def _sec_ecart_declaration(conn, menages, diag, codes, noms, descente=False):
     for (code, d), n in brut.items():
         cle = noms.get(code, code)
         declare[(cle, d)] = declare.get((cle, d), 0) + n
-    for code in set(codes) | {c for c, _ in brut}:
+    for code in set(codes) | {c for c, _ in brut} | set(agents_tous):
         info = ac.get(code, {})
         chefs[noms.get(code, code)] = (info.get("chef_nom")
                                        or info.get("chef_login") or "")
     lignes = [{"agent": (diag.get(m["key"], {}).get("agent")
                          or "(agent inconnu)"),
                "date": m["date"]} for m in menages]
-    out = rapport_core.ecart_declaration(lignes, declare, chefs)
+    out = rapport_core.ecart_declaration(
+        lignes, declare, chefs, [noms.get(c, c) for c in agents_tous])
     out["dispo"] = bool(out["total"]["declarants"])
     out["raison"] = "" if out["dispo"] else "aucune"
     return out
 
 
-def _sec_ecart_dates(conn, menages, agent_code, noms):
+def _sec_ecart_dates(conn, menages, agent_code, noms, agents_tous=()):
     """Une ligne par AGENT × DATE, pour TOUS les agents du périmètre — qu'ils
     aient déclaré ou non : déclaré (None = pas de déclaration, ce n'est pas un
     zéro), arrivé au serveur (interviews datées), écart = déclaré − arrivé, et
@@ -1971,6 +1979,12 @@ def _sec_ecart_dates(conn, menages, agent_code, noms):
         l[_cle_statut(m["statut"])] += 1
     for (code, d), n in declare.items():
         ligne(code, d)["declare"] = int(n or 0)
+    # Agents du périmètre sans interview ni déclaration : une ligne à 0, sans
+    # date (le sous-total de l'agent vaut alors 0).
+    presents = {c for c, _d in lignes}
+    for code in agents_tous:
+        if code not in presents:
+            ligne(code, "")
     out = sorted(lignes.values(), key=lambda l: (l["agent"], l["date"]))
     for l in out:
         l["ecart"] = (l["declare"] - l["recu"]
@@ -2088,7 +2102,7 @@ def _vad_par_keyden(conn):
 
 
 def _sec_couverture_agents(conn, menages, agent_code, noms, districts=None,
-                           communes=None, fokontany=None):
+                           communes=None, fokontany=None, tous=False):
     """Tableau de couverture par agent + reste à faire + doubles interviews.
 
     `agent_code` = {interview__key: code agent BRUT} (le préchargement porte
@@ -2157,6 +2171,11 @@ def _sec_couverture_agents(conn, menages, agent_code, noms, districts=None,
         # Affecté à un AUTRE agent, ou absent du préchargement (ménage jamais
         # envoyé, ou envoyé par un fichier antérieur au registre).
         p["nonAffAutre" if kd in aff else "nonAffHors"] += 1
+    # `tous` : les agents des districts comparés qui n'ont NI affectation NI
+    # interview figurent aussi, à 0 (demande utilisateur, 2026-09-28).
+    if tous:
+        for code in equipes.agents_du_district(conn, dis_reg - {None}):
+            ligne(code)
     chefs = equipes.agents_et_chefs(conn)
     agents = []
     for p in par.values():
@@ -2285,6 +2304,16 @@ def _agrege_calcul(conn, districts=None, communes=None, portee_lib="", section="
     # Codes agent BRUTS (avant remplacement par le nom) : c'est sur eux que
     # portent les déclarations (`declaration_agent.code_agent`).
     codes_agents = {d["agent"] for d in diag.values() if d.get("agent")}
+    # TOUS les agents du périmètre (agent.district_ae), même sans interview :
+    # ils figurent à 0 dans les tableaux par agent. Seulement au niveau du
+    # district : pas pour un rôle borné à des communes ni pendant une descente
+    # (un agent n'est rattaché qu'à un district, pas à une commune).
+    agents_tous = []
+    if communes is None and not commune and not fokontany:
+        try:
+            agents_tous = equipes.agents_du_district(conn, districts)
+        except Exception:
+            agents_tous = []
     agent_code = {k: d["agent"] for k, d in diag.items() if d.get("agent")}
     for d in diag.values():                       # nom de l'agent si renseigné
         d["agent"] = noms.get(d["agent"], d["agent"])
@@ -2325,14 +2354,17 @@ def _agrege_calcul(conn, districts=None, communes=None, portee_lib="", section="
         # err_individu). Le calcul est peu coûteux et la donnée reste
         # disponible si l'on veut rétablir cette vue.
         "erreurs": _sec_erreurs(menages, membres, diag),
-        "agents": _sec_agents(menages, membres, diag),
+        "agents": _sec_agents(menages, membres, diag,
+                              [noms.get(c, c) for c in agents_tous]),
         # Couverture par agent (affectation du préchargement ↔ VAD) : lit tout
         # le registre et toute la VAD, donc seulement pour la page « Par agent »
         # et le classeur Excel (section « export »).
-        "ecartDates": (_sec_ecart_dates(conn, menages, agent_code, noms)
+        "ecartDates": (_sec_ecart_dates(conn, menages, agent_code, noms,
+                                        agents_tous)
                        if section == "export" else {"lignes": []}),
         "couverture": (_sec_couverture_agents(conn, menages, agent_code, noms,
-                                              districts, communes_eff, fokontany)
+                                              districts, communes_eff, fokontany,
+                                              tous=bool(agents_tous))
                        if section in ("agents", "export")
                        else {"dispo": False, "agents": [], "total": {},
                              "doubles": []}),
@@ -2340,7 +2372,7 @@ def _agrege_calcul(conn, districts=None, communes=None, portee_lib="", section="
         # Calculé au périmètre du RÔLE seulement (pas pendant une descente).
         "ecart": _sec_ecart_declaration(
             conn, menages, diag, codes_agents, noms,
-            descente=bool(commune or fokontany)),
+            descente=bool(commune or fokontany), agents_tous=agents_tous),
         "qualite": (vad_qualite.calculer(conn, districts, communes, cible)
                     if section == "qualite" else {"disponible": False}),
         # Qualité de l'EXPORT, pas de l'agent : confrontation au RGPH-3 et

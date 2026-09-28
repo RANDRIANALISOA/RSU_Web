@@ -2096,15 +2096,20 @@ def _p_agents(a):
                "duree": (f'{_n(r["duree"])} min' if r["duree"] else "—"),
                "anomalies": r["anomalies"]} for r in a["agents"]]
     tot = sum(r["menages"] for r in a["agents"])
+    actifs = sum(1 for r in a["agents"] if r["menages"])
+    sans = len(a["agents"]) - actifs
     h = ['<div class="vad-kpi">',
-         _kpi("Agents ayant travaillé", _n(len(a["agents"])),
-              f'{_n(tot)} ménages interviewés au total', "info"),
+         _kpi("Agents ayant travaillé", _n(actifs),
+              f'{_n(tot)} ménages interviewés au total'
+              + (f' · {_n(sans)} agent(s) du district à 0' if sans else ""),
+              "info"),
          '</div>',
          # Couverture de l'affectation du préchargement, en tête : c'est le
          # tableau de suivi de l'avancement agent par agent.
          _p_couverture(a),
          _box("Production par agent",
-              "Triée par nombre de ménages interviewés",
+              "Triée par nombre de ménages interviewés · tous les agents du "
+              "district figurent, 0 = aucun ménage interviewé",
               _table([("agent", "Agent"), ("menages", "Ménages"),
                       ("membres", "Membres"), ("jours", "Jours"),
                       ("parJour", "Ménages/jour"), ("taille", "Taille moy."),

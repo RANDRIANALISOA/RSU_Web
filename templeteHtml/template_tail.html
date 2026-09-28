@@ -599,7 +599,16 @@ function renderAgentSection(f){
 function renderAgentSummary(f){
   const ms   = dataForFilter(f);
   const segs = segsForFilter(f);
-  const agents = [...new Set(ms.map(m=>m.agent).filter(Boolean))].sort();
+  const agents = [...new Set(ms.map(m=>m.agent).filter(Boolean))];
+  // Web, niveau district : TOUS les agents du district, même sans aucun
+  // ménage (ils s'affichent avec 0). Pas au niveau commune : on ne sait pas à
+  // quelle commune rattacher un agent qui n'a rien fait.
+  let sansDonnees = 0;
+  if(typeof AGENTS_PERIMETRE !== 'undefined' && Array.isArray(AGENTS_PERIMETRE)
+     && !f.commune && !f.fkt){
+    AGENTS_PERIMETRE.forEach(a=>{ if(!agents.includes(a)){ agents.push(a); sansDonnees++; } });
+  }
+  agents.sort();
 
   document.getElementById('agent-summary-scope').textContent = scopeLabel(f);
   document.getElementById('agent-summary-tbody').innerHTML = agents.length
@@ -608,18 +617,19 @@ function renderAgentSummary(f){
         const asg = segs.filter(s=>s.agent===a);
         const pres= am.filter(m=>m.presence===1).length;
         const tps = avg(asg.filter(s=>s.tps>0).map(s=>s.tps));
-        return `<tr>
+        return `<tr${am.length ? '' : ' style="color:var(--muted)"'}>
           <td><strong>${a}</strong></td>
           <td style="font-family:'JetBrains Mono',monospace">${am.length}</td>
           <td style="font-family:'JetBrains Mono',monospace">${asg.length}</td>
-          <td>${pct(pres,am.length)}%</td>
+          <td>${am.length ? pct(pres,am.length)+'%' : '—'}</td>
           <td style="font-family:'JetBrains Mono',monospace">${tps||'—'}</td>
         </tr>`;
       }).join('')
     : `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:30px">Aucun agent pour cette sélection.</td></tr>`;
 
   document.getElementById('agent-summary-count').textContent =
-    `${agents.length} agent(s) · choisissez un fokontany pour le détail individuel de chaque agent`;
+    `${agents.length} agent(s)` + (sansDonnees ? ` dont ${sansDonnees} sans aucun ménage (0)` : '')
+    + ` · choisissez un fokontany pour le détail individuel de chaque agent`;
 }
 
 function toggleEcartDetail(i){

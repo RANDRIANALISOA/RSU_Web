@@ -337,7 +337,7 @@ def _feuille_global(wb, conn, code_district, nom_district, menages,
 # ---------------------------------------------------------------------------
 # Feuille 2 : Dénombrement par agent et par jour
 # ---------------------------------------------------------------------------
-def _feuille_agents(wb, conn, nom_district, menages):
+def _feuille_agents(wb, conn, nom_district, menages, agents_tous=()):
     ws = wb.create_sheet("Dénombrement par agent-jour")
     ac = equipes.agents_et_chefs(conn)
     from collections import defaultdict
@@ -364,12 +364,22 @@ def _feuille_agents(wb, conn, nom_district, menages):
         chef = (info.get("chef_nom") or info.get("chef_login")
                 or "(chef non affecté)")
         cnt[chef][(commune, agent_nom)][d] += 1
+    # Agents du district SANS aucune donnée : une ligne à 0 sous leur chef.
+    avec = {(m.get("agent") or "").strip() for m in menages}
+    for code in agents_tous:
+        if code in avec:
+            continue
+        info = ac.get(code, {})
+        chef = (info.get("chef_nom") or info.get("chef_login")
+                or "(chef non affecté)")
+        cnt[chef][("(aucune donnée)", info.get("nom") or code)]
 
     # -- En-tête du document (bloc partagé, identique au « Rapport global ») --
     r = _entete_document(
         ws, nom_district,
         "Un tableau par chef d'équipe. Chaque valeur (colonnes de dates) "
-        "= NOMBRE DE MÉNAGES DÉNOMBRÉS par l'agent ce jour-là.")
+        "= NOMBRE DE MÉNAGES DÉNOMBRÉS par l'agent ce jour-là. Tous les agents "
+        "du district figurent : « (aucune donnée) » = 0 ménage reçu.")
     r = _titre(ws, r, "Tableau — Dénombrement par agent et par jour "
                "(un tableau par chef d'équipe)")
 
@@ -405,7 +415,7 @@ def _feuille_agents(wb, conn, nom_district, menages):
 # ---------------------------------------------------------------------------
 # Feuille 3 : BaseDenParAgent (table PLATE, une ligne par agent×zone)
 # ---------------------------------------------------------------------------
-def _feuille_base_agents(wb, conn, nom_district, menages):
+def _feuille_base_agents(wb, conn, nom_district, menages, agents_tous=()):
     """Table « base » plate : une ligne par (commune, chef, agent, fokontany),
     colonnes = dates, cellule = nombre de ménages dénombrés. Pensée pour un
     tableau croisé dynamique / export brut."""
@@ -433,6 +443,15 @@ def _feuille_base_agents(wb, conn, nom_district, menages):
         chef = (info.get("chef_nom") or info.get("chef_login")
                 or "(chef non affecté)")
         cnt[(commune, chef, agent_nom, fkt)][d] += 1
+    # Agents du district SANS aucune donnée : une ligne à 0.
+    avec = {(m.get("agent") or "").strip() for m in menages}
+    for code in agents_tous:
+        if code in avec:
+            continue
+        info = ac.get(code, {})
+        chef = (info.get("chef_nom") or info.get("chef_login")
+                or "(chef non affecté)")
+        cnt[("(aucune donnée)", chef, info.get("nom") or code, "")]
 
     # -- En-tête du document (bloc partagé, identique au « Rapport global ») --
     r = _entete_document(
@@ -567,7 +586,7 @@ def _ecart_donnees(conn, menages):
 # ---------------------------------------------------------------------------
 # Feuille 5 : Écart déclaration-serveur PAR AGENT (une ligne par agent)
 # ---------------------------------------------------------------------------
-def _feuille_ecart_agent(wb, conn, nom_district, menages):
+def _feuille_ecart_agent(wb, conn, nom_district, menages, agents_tous=()):
     """Synthèse PAR AGENT de l'écart déclaration <-> serveur : un agent, une
     ligne (jours déclarés, ménages déclarés, ménages reçus, écart, % du déclaré),
     le plus gros écart d'abord.
@@ -589,7 +608,9 @@ def _feuille_ecart_agent(wb, conn, nom_district, menages):
 
     synth = rapport_core.ecart_declaration(
         menages, declare,
-        {c: _chef(c) for c in (codes_serveur | {c for c, _ in declare})})
+        {c: _chef(c) for c in (codes_serveur | {c for c, _ in declare}
+                               | set(agents_tous))},
+        agents_tous)
 
     r = _entete_document(
         ws, nom_district,
@@ -610,14 +631,9 @@ def _feuille_ecart_agent(wb, conn, nom_district, menages):
             "l'écart ne peut pas être calculé. Ces déclarations sont saisies par "
             "le Superviseur Technique (« Déclaration des agents »).",
             "", "", "", "", "", ""])
-        if synth["agents"]:
-            r = _ligne(ws, r, [
-                f"{synth['total']['agents']} agent(s) ont des données reçues au "
-                f"serveur ({synth['total']['recu']} ménages).",
-                "", "", "", "", "", ""])
-        r = _source(ws, r)
-        ws.freeze_panes = "A2"
-        return
+        # Le tableau suit quand même : tous les agents, avec ce qui est arrivé
+        # au serveur (0 pour ceux qui n'ont rien fait).
+        r += 1
 
     r = _ecrire_entete(
         ws, r,
@@ -647,7 +663,7 @@ def _feuille_ecart_agent(wb, conn, nom_district, menages):
 # ---------------------------------------------------------------------------
 # Feuille 6 : Écart DÉCLARATION / SERVEUR, DÉTAIL par chef d'équipe et par date
 # ---------------------------------------------------------------------------
-def _feuille_ecart_declaration(wb, conn, nom_district, menages):
+def _feuille_ecart_declaration(wb, conn, nom_district, menages, agents_tous=()):
     """Confronte, pour chaque agent, par chef d'équipe et par date :
       - le nombre de ménages DÉCLARÉ par l'agent (table `declaration_agent`,
         saisie par le Superviseur Technique depuis un modèle Excel) ;
@@ -679,6 +695,11 @@ def _feuille_ecart_declaration(wb, conn, nom_district, menages):
         lignes[_chef(code)].setdefault((code, d), [None, None])[0] = n
     for (code, d), n in recu.items():
         lignes[_chef(code)].setdefault((code, d), [None, None])[1] = n
+    # Agents du district SANS déclaration ni donnée : une ligne à 0, sans date.
+    presents = {c for c, _ in declare} | {c for c, _ in recu}
+    for code in agents_tous:
+        if code not in presents:
+            lignes[_chef(code)].setdefault((code, ""), [None, 0])
 
     nb_vad = declarations.compter(conn, "VAD")["lignes"]
     note_vad = ("" if not nb_vad else
@@ -722,7 +743,7 @@ def _feuille_ecart_declaration(wb, conn, nom_district, menages):
             rec_n = rec or 0
             t_rec += rec_n
             if dec is None:
-                r = _ligne(ws, r, [_nom(code), _jj(d), ND, rec_n, ND, ND])
+                r = _ligne(ws, r, [_nom(code), _jj(d) or ND, ND, rec_n, ND, ND])
                 continue
             t_dec += dec
             ecart = dec - rec_n
@@ -754,12 +775,17 @@ def generer_classeur(conn, code_district, nom_district, communes_autorisees=None
     wb = Workbook()
     _feuille_global(wb, conn, code_district, nom_district, menages,
                     communes_autorisees)
-    _feuille_agents(wb, conn, nom_district, menages)
-    _feuille_base_agents(wb, conn, nom_district, menages)
+    # TOUS les agents du district (agent.district_ae), même sans données : ils
+    # figurent avec 0 ménage. Pas pour un périmètre de communes (Superviseur) :
+    # un agent n'est rattaché qu'à un district.
+    agents_tous = ([] if communes_autorisees else
+                   equipes.agents_du_district(conn, code_district))
+    _feuille_agents(wb, conn, nom_district, menages, agents_tous)
+    _feuille_base_agents(wb, conn, nom_district, menages, agents_tous)
     _feuille_segments_multiples(wb, conn, code_district, nom_district,
                                 segments_den, communes_autorisees)
-    _feuille_ecart_agent(wb, conn, nom_district, menages)
-    _feuille_ecart_declaration(wb, conn, nom_district, menages)
+    _feuille_ecart_agent(wb, conn, nom_district, menages, agents_tous)
+    _feuille_ecart_declaration(wb, conn, nom_district, menages, agents_tous)
     return wb
 
 

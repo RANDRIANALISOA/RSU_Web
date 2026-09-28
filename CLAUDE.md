@@ -6939,3 +6939,26 @@ une copie de la base) a été supprimé le 28/09.
   lecture (garde `role not in _ROLES_JOURNAL_LECTURE and not peut_rapport_ia(u)`). Borné
   à `perimetre(u)` → pour lui, les journaux de TOUT le district 5201. Testé : lui 200 +
   bouton IA ; autre Superviseur → redirigé (303).
+
+## TOUS les agents dans les tableaux « par agent », 0 si aucune donnée (journal 2026-09-28)
+**Demande** : dashboards DEN et VAD + classeurs Excel : afficher tous les agents, même sans
+donnée, avec 0 ménage.
+- Source de la liste : `equipes.agents_du_district(conn, districts)` = `agent.district_ae`
+  (renseigné pour les 3 682 agents). **Seulement au niveau district** : ni pour un rôle
+  borné à des communes (Superviseur), ni pendant une descente commune/fokontany — un
+  agent n'est rattaché qu'à un district.
+- `rapport_core.ecart_declaration(..., agents_tous=)` : agents sans donnée → reçu 0,
+  déclaré None. `generer_rapport(agents_perimetre=)` écrit `const AGENTS_PERIMETRE`
+  (garde `typeof` → exe inchangé) ; `renderAgentSummary` les ajoute au niveau district
+  (lignes grisées, « — » pour le % présents, compteur « dont N sans aucun ménage »).
+- Export DEN : feuilles agent-jour et BaseDenParAgent (commune « (aucune donnée) »,
+  total 0), Écart par agent (le tableau s'affiche désormais même sans déclaration),
+  Écart déclaration-serveur (ligne sans date, reçu 0).
+- VAD : `_sec_agents` (production, KPI « N agent(s) du district à 0 »),
+  `_sec_ecart_declaration`, `_sec_ecart_dates` (feuille Excel), `_sec_couverture_agents`
+  (`tous=` : agents des districts ayant un registre de préchargement).
+- ⚠️ Tant que `vad_menage` est vide, tout le tableau de bord VAD affiche
+  `page_vad_vide` (comportement existant) : la liste apparaîtra avec les 1ères données.
+- Vérifié : Firefox headless, `/vue/agent` 5201 → 472 lignes « 0 0 — — » ; Excel DEN
+  (473 agents) ; VAD hors ligne (473 à 0) ; Superviseur communes → pas de liste injectée.
+  Doublons de noms : la clé d'agent du dashboard est le NOM (convention existante).

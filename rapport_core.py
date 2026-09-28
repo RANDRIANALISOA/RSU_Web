@@ -681,7 +681,8 @@ def couverture(menages: list, attendus: dict, niveau: str = "district") -> dict:
 # ---------------------------------------------------------------------------
 # 5ter. ECART entre ce que l'agent DECLARE et ce qui ARRIVE AU SERVEUR
 # ---------------------------------------------------------------------------
-def ecart_declaration(menages: list, declare: dict, chefs: dict = None) -> dict:
+def ecart_declaration(menages: list, declare: dict, chefs: dict = None,
+                      agents_tous=None) -> dict:
     """Confronte, PAR AGENT, le nombre de menages DECLARE et celui RECU au serveur.
 
     - `menages` : les menages du perimetre (cle "agent" = cle d'agent, "date" au
@@ -699,6 +700,10 @@ def ecart_declaration(menages: list, declare: dict, chefs: dict = None) -> dict:
 
     Les menages sans date valide sont ignores (ils ne sont comparables a aucune
     declaration) — meme regle que la feuille Excel « Ecart declaration-serveur ».
+
+    `agents_tous` (facultatif) : cles d'agents a afficher MEME sans aucune
+    donnee ni declaration (recu = 0, declare = None) — tous les agents du
+    district, pour voir aussi ceux qui n'ont encore rien fait.
 
     Renvoie {"agents": [...], "total": {...}}, les agents tries par ecart
     DECROISSANT (le plus gros manquant d'abord), les non-declarants a la fin."""
@@ -719,6 +724,8 @@ def ecart_declaration(menages: list, declare: dict, chefs: dict = None) -> dict:
         par_agent.setdefault(cle, {}).setdefault(d, [None, 0])[0] = int(n or 0)
     for (cle, d), n in recu.items():
         par_agent.setdefault(cle, {}).setdefault(d, [None, 0])[1] = int(n or 0)
+    for cle in agents_tous or ():
+        par_agent.setdefault((cle or "").strip(), {})
 
     def _pct_ecart(dec, ec):
         return round(100.0 * ec / dec, 1) if dec else None
@@ -1247,7 +1254,7 @@ def generer_rapport(chemins: dict, log=None, source=None,
                     nav_tree=None, alleger=False, nav_base="/vue",
                     agents_noms=None, menages_attendus=None,
                     contours_override=None, declarations=None,
-                    chefs_agents=None) -> str:
+                    chefs_agents=None, agents_perimetre=None) -> str:
     """Genere le rapport HTML. Renvoie le chemin du fichier produit.
 
     `source` (optionnel) : resolveur kind -> dataset, ou kind est
@@ -1277,6 +1284,9 @@ def generer_rapport(chemins: dict, log=None, source=None,
     AGENT entre ce qui est DECLARE et ce qui est ARRIVE AU SERVEUR (cf.
     `ecart_declaration`), affiche sur la page « Par agent ». La cle d'agent suit
     la convention des menages (NOM si `agents_noms` le renseigne, sinon code).
+    `agents_perimetre` (optionnel, web) : cles de TOUS les agents du district
+    (meme sans donnees). Ecrit `const AGENTS_PERIMETRE` : la page « Par agent »
+    les affiche avec 0 menage ; ils entrent aussi dans ECART_DECL.
     `chefs_agents` (optionnel) : {cle_agent: nom du chef d'equipe}, pour la
     colonne « Chef d'equipe » de ce tableau. Absents (exe) : rien n'est ecrit et
     le gabarit n'affiche pas le tableau.
@@ -1454,7 +1464,14 @@ def generer_rapport(chemins: dict, log=None, source=None,
         if declarations is not None:
             f.write("const ECART_DECL = "
                     + json.dumps(ecart_declaration(menages, declarations,
-                                                   chefs_agents),
+                                                   chefs_agents,
+                                                   agents_perimetre),
+                                 ensure_ascii=False) + ";\n")
+        # Tous les agents du district, meme sans donnees (web, « Par agent »).
+        # Garde par `typeof AGENTS_PERIMETRE` cote gabarit -> exe inchange.
+        if agents_perimetre is not None:
+            f.write("const AGENTS_PERIMETRE = "
+                    + json.dumps(sorted(set(agents_perimetre)),
                                  ensure_ascii=False) + ";\n")
         f.write(tail)
 

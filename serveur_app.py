@@ -579,8 +579,16 @@ def rapport_vue(sel: dict, section: str, level: str, code,
         # zones confondues) : elle n'est pas ventilable par commune ni fokontany,
         # on ne la calcule donc qu'au périmètre ENTIER (niveau « district », qui
         # vaut « mes communes affectées » pour un Superviseur Technique).
-        declarations_agents = chefs_agents = None
+        declarations_agents = chefs_agents = agents_perimetre = None
         if section == "agent" and level == "district":
+            # TOUS les agents du district (agent.district_ae), même sans aucune
+            # donnée : ils s'affichent avec 0 ménage. Pas pour un Superviseur
+            # borné à ses communes : un agent n'est rattaché qu'à un DISTRICT,
+            # on ne saurait pas s'il relève de ses communes.
+            codes_district = ([] if communes_autorisees else
+                              equipes.agents_du_district(conn, code_district))
+            if not communes_autorisees:
+                agents_perimetre = [agents_noms.get(c, c) for c in codes_district]
             codes_serveur = db_source.agents_du_perimetre(
                 conn,
                 district=(None if communes_autorisees else code_district),
@@ -595,7 +603,8 @@ def rapport_vue(sel: dict, section: str, level: str, code,
                 cle = agents_noms.get(cd, cd)
                 declarations_agents[(cle, d)] = (
                     declarations_agents.get((cle, d), 0) + n)
-            for cd in set(codes_serveur) | {c for c, _ in declare}:
+            for cd in (set(codes_serveur) | {c for c, _ in declare}
+                       | set(codes_district)):
                 info = ac.get(cd, {})
                 chefs_agents[agents_noms.get(cd, cd)] = (
                     info.get("chef_nom") or info.get("chef_login") or "")
@@ -615,6 +624,7 @@ def rapport_vue(sel: dict, section: str, level: str, code,
             menages_attendus=menages_attendus,
             declarations=declarations_agents,
             chefs_agents=chefs_agents,
+            agents_perimetre=agents_perimetre,
             contours_override=limites_db.contours_pour(conn, codes_geo))
         with open(out, "r", encoding="utf-8") as f:
             page = f.read()
