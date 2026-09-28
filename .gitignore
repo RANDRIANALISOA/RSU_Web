@@ -53,3 +53,4 @@ export2.xlsx
 *.avant-*
 # Extractions ponctuelles d'agents / CE (listes nominatives)
 deploy/backups/*.csv
+MAINTENANCE

@@ -6880,3 +6880,13 @@ sans district, aucun agent pointant vers un chef d'équipe inexistant,
 
 L'avertissement « fiche(s) sans district » de la page de téléversement ne
 s'affiche plus — il n'a plus lieu d'être.
+
+## Interrupteur de MAINTENANCE sans droits root (journal 2026-09-27)
+Demande : couper l'accès à https://rse.instat.mg/rsu-web/. `rse` n'a pas le droit
+`sudo systemctl stop` (refusé), et tuer le processus ne suffit pas (`Restart=always`).
+D'où `Handler._en_maintenance()` (appelé en tête de `do_GET`/`do_POST`) : tant que le
+fichier **`MAINTENANCE`** existe à la racine du projet, toute requête reçoit une page 503
+« Application momentanément suspendue » (no-store, Retry-After, connexion fermée).
+Testé à chaque requête : **créer/supprimer le fichier suffit, sans redémarrage**. Fichier
+ignoré par Git. **ACTIVÉ le 2026-09-27 à 08:50** (processus relancé pour charger le code) ;
+vérifié 503 sur 127.0.0.1:8000 et via Apache (http/https). Réactiver : `rm MAINTENANCE`.
