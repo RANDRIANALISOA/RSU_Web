@@ -6933,3 +6933,9 @@ AVANT `_synchroniser_cache()`. `.gitignore` : `*.sqlite-*` (fichiers WAL), `*.av
 Unité systemd à mettre à jour : `PYTHONUNBUFFERED=1` (sinon les messages de l'application
 n'arrivent pas au journal) et éventuellement `RSU_PROCESSUS`. `/tmp/rsu_*` (2,8 Go, dont
 une copie de la base) a été supprimé le 28/09.
+- (même jour) Rapport IA **ajouté** pour `SUPTECH_FENERIVEEST_04_02` (ANDRIANTSOA Andy
+  Hanitrarivelo, Superviseur Technique, 5201). Un login de `LOGINS_RAPPORT_IA` accède
+  désormais à `/rapport-mission` et voit sa carte dans le menu, même hors des rôles de
+  lecture (garde `role not in _ROLES_JOURNAL_LECTURE and not peut_rapport_ia(u)`). Borné
+  à `perimetre(u)` → pour lui, les journaux de TOUT le district 5201. Testé : lui 200 +
+  bouton IA ; autre Superviseur → redirigé (303).

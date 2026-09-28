@@ -420,7 +420,11 @@ _ROLES_JOURNAL_LECTURE = utilisateurs.ROLES_JOURNAL_LECTURE
 # (/rapport-mission) reste, elle, ouverte aux rôles de LECTURE ci-dessus. Pour
 # ouvrir l'accès à un autre compte (ex. un futur COORDOREG_03), l'ajouter ici.
 # COORDOREG_01 retiré le 2026-09-28 (demande utilisateur).
-LOGINS_RAPPORT_IA = {"COORDOREG_02"}
+# SUPTECH_FENERIVEEST_04_02 (ANDRIANTSOA Andy Hanitrarivelo, Superviseur
+# Technique, district 5201) ajouté le 2026-09-28 : un compte de cette liste
+# accède AUSSI à /rapport-mission même hors des rôles de lecture, borné à son
+# périmètre (`perimetre(u)`, donc son district).
+LOGINS_RAPPORT_IA = {"COORDOREG_02", "SUPTECH_FENERIVEEST_04_02"}
 
 
 def peut_rapport_ia(u) -> bool:
@@ -1049,7 +1053,7 @@ def page_menu_operation(role: str, utilisateur=None) -> str:
             '<div class="go">Ouvrir →</div></a>')
     # Carte « Rapport de mission » — compilation (hors-ligne) des journaux de bord
     # en un rapport structuré. Réservée aux rôles de LECTURE (Coordonnateurs + Admin).
-    if role in _ROLES_JOURNAL_LECTURE:
+    if role in _ROLES_JOURNAL_LECTURE or peut_rapport_ia(utilisateur):
         cartes += (
             '<a class="ca" href="/rapport-mission">'
             '<div class="ic">📄</div>'
@@ -4643,7 +4647,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         (préfixés par _html/_prefixer)."""
         u = (sess or {}).get("utilisateur") or {}
         role = (u.get("responsabilite") or "").strip()
-        if role not in _ROLES_JOURNAL_LECTURE:
+        if role not in _ROLES_JOURNAL_LECTURE and not peut_rapport_ia(u):
             self._redirige(accueil_role(role))
             return
         districts = perimetre(u)[0]        # None = tous ; set = ses districts
