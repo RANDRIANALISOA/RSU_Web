@@ -47,3 +47,9 @@ rapport_mission/
 *_STATA_All_*/
 # Classeurs de test generes
 export2.xlsx
+# Fichiers de travail SQLite (mode WAL)
+*.sqlite-*
+# Copies de sauvegarde manuelles avant modification (ex. serveur_app.py.avant-pool)
+*.avant-*
+# Extractions ponctuelles d'agents / CE (listes nominatives)
+deploy/backups/*.csv

@@ -24,7 +24,12 @@ INDEX = {"rgph_menage": ["cc_rsu", "cd_rsu", "cr_rsu", "IDMEN"],
          "rgph_passage_commune": ["cc_rgph", "cc_rsu"]}
 
 def sauvegarder(conn):
-    if type(conn).__module__.split(".")[0] != "sqlite3": return None
+    # `est_sqlite` et non le nom du module : les connexions de
+    # `db_source` sont desormais des SOUS-CLASSES, leur module est
+    # « db_source ». Ce test commande la SAUVEGARDE avant modification :
+    # s'y tromper, c'etait ecrire dans la base sans filet.
+    from db_source import est_sqlite
+    if not est_sqlite(conn): return None
     cible = conn.execute("PRAGMA database_list").fetchall()[0][2]
     if not cible or not os.path.exists(cible): return None
     bak = cible + ".avant_rgph.bak"
@@ -36,7 +41,8 @@ def main():
     if not os.path.exists(SRC):
         sys.exit("Introuvable : %s — lancer d'abord rgph3/03_recoder.py" % SRC)
     conn = connect()
-    est_sqlite = type(conn).__module__.split(".")[0] == "sqlite3"
+    from db_source import est_sqlite as _est_sqlite
+    est_sqlite = _est_sqlite(conn)
     cible = sauvegarder(conn)
     t0 = time.time()
     cur = conn.cursor()

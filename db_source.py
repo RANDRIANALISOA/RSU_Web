@@ -29,6 +29,8 @@ connexion change — voir `connect()`.
 """
 
 import os
+import sqlite3 as _sqlite3
+import threading as _threading
 
 from lire_dta import lire_dta
 from rapport_core import _REQUIS, ErreurStructure, ErreurDonnees
@@ -131,9 +133,148 @@ def connect():
     if url.startswith("postgres"):
         import psycopg  # psycopg 3 ; `pip install "psycopg[binary]"`
         return psycopg.connect(url)
-    import sqlite3
+    return _prendre()
+
+
+# ---------------------------------------------------------------------------
+# Pool de connexions SQLite
+# ---------------------------------------------------------------------------
+# Ouvrir une connexion ET lire une table coute 1,458 ms sur cette base (1,1 Go,
+# 45 tables) : c'est la lecture du SCHEMA, payee a la premiere requete de toute
+# connexion neuve. Sur une connexion deja ouverte : 0,009 ms, soit 160 fois
+# moins. Il y a 83 appels a `connect()` dans le projet, plusieurs par requete.
+#
+# ATTENTION AUX MESURES : `sqlite3.connect()` est PARESSEUX, il ne touche pas le
+# fichier tant qu'on ne lit rien. Chronometrer `connect()` seul donne 0,046 ms
+# et fait conclure a tort qu'il n'y a rien a gagner. Toute mesure doit inclure
+# une VRAIE lecture de table.
+TAILLE_POOL = 8
+_POOL = []
+_POOL_LOCK = _threading.Lock()
+
+
+class _Connexion(_sqlite3.Connection):
+    """Connexion dont `close()` REND au pool au lieu de fermer.
+
+    Sous-classe et non proxy : elle reste une vraie `sqlite3.Connection` pour
+    tout le code existant (isinstance, gestionnaire de contexte, execute...),
+    sans indirection.
+    """
+
+    rendue = False
+
+    def close(self):
+        if self.rendue:
+            return
+        self.rendue = True
+        _rendre(self)
+
+    def fermer_vraiment(self):
+        _sqlite3.Connection.close(self)
+
+    def cursor(self, *a, **kw):
+        # Garde-fou : une connexion rendue peut deja servir un AUTRE fil. S'en
+        # resservir melangerait deux requetes en silence ; mieux vaut l'erreur.
+        if self.rendue:
+            raise _sqlite3.ProgrammingError(
+                "Connexion utilisee apres close() : elle est rendue au pool.")
+        return _sqlite3.Connection.cursor(self, *a, **kw)
+
+
+def _ouvrir():
     chemin = os.environ.get("RSU_SQLITE", os.path.join(BASE, "rsu_local.sqlite"))
-    return sqlite3.connect(chemin)
+    # check_same_thread=False : le pool passe les connexions d'un fil a l'autre.
+    # Le pool n'en remet qu'UNE a la fois a un appelant, et `cursor()` refuse
+    # une connexion deja rendue : les deux garanties tiennent ensemble.
+    c = _sqlite3.connect(chemin, timeout=30, check_same_thread=False,
+                         factory=_Connexion)
+    try:
+        # PAS de `PRAGMA journal_mode` ici : WAL est PERSISTANT dans le fichier,
+        # pose une fois au demarrage par `activer_wal()`.
+        c.execute("PRAGMA busy_timeout=30000")
+        c.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass                                     # base en lecture seule : tant pis
+    return c
+
+
+def _prendre():
+    while True:
+        with _POOL_LOCK:
+            c = _POOL.pop() if _POOL else None
+        if c is None:
+            return _ouvrir()
+        c.rendue = False
+        try:
+            _sqlite3.Connection.execute(c, "SELECT 1").fetchone()
+            return c
+        except Exception:                        # connexion abimee : on la jette
+            try:
+                c.fermer_vraiment()
+            except Exception:
+                pass
+
+
+def _rendre(c):
+    try:
+        c.rollback()          # aucune transaction ouverte ne doit survivre au
+    except Exception:         # retour : le prochain appelant en heriterait
+        try:
+            c.fermer_vraiment()
+        except Exception:
+            pass
+        return
+    with _POOL_LOCK:
+        if len(_POOL) < TAILLE_POOL:
+            _POOL.append(c)
+            return
+    try:
+        c.fermer_vraiment()   # pool plein
+    except Exception:
+        pass
+
+
+def vider_pool() -> int:
+    """Ferme vraiment les connexions en attente (tests, arret propre)."""
+    with _POOL_LOCK:
+        restantes = list(_POOL)
+        del _POOL[:]
+    for c in restantes:
+        try:
+            c.fermer_vraiment()
+        except Exception:
+            pass
+    return len(restantes)
+
+
+def est_sqlite(conn) -> bool:
+    """SQLite ou non — sans regarder `type(conn).__module__`.
+
+    Nos connexions sont des SOUS-CLASSES de sqlite3.Connection : leur module est
+    « db_source », pas « sqlite3 ». Tout test ecrit sur le nom du module se
+    trompe donc desormais, et en silence. `isinstance` est la bonne question.
+    """
+    try:
+        return isinstance(conn, _sqlite3.Connection)
+    except Exception:
+        return False
+
+
+def activer_wal() -> str:
+    """Pose le mode WAL sur le FICHIER de base, une fois au demarrage.
+
+    C'est lui qui permet a plusieurs processus de lire pendant qu'un autre
+    ecrit. Persistant : il n'a pas a etre repose a chaque connexion.
+    """
+    c = _ouvrir()
+    try:
+        mode = c.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        c.commit()
+        return str(mode)
+    except Exception:
+        return "inconnu"
+    finally:
+        c.fermer_vraiment()
 
 
 def _placeholder(conn) -> str:

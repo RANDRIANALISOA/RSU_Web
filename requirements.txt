@@ -1,0 +1,49 @@
+# Dépendances de RSU-web.
+# Reconstruire un environnement identique :
+#     venv/bin/pip install -r requirements.txt
+#
+# RSU-web tourne pour l'essentiel en BIBLIOTHÈQUE STANDARD (http.server,
+# sqlite3, struct…) : c'est un choix d'origine, la machine cible devait pouvoir
+# le faire tourner sans rien installer. `lire_dta.py` lit d'ailleurs les .dta de
+# Stata en Python pur, sans pandas ni pyreadstat. Les paquets ci-dessous sont
+# donc des compléments, pas un socle.
+
+openpyxl>=3.1        # classeurs .xlsx (export, listing des erreurs VAD)
+
+# ---------------------------------------------------------------------------
+# ⚠️ VERSIONS ÉPINGLÉES, ET C'EST VITAL — NE PAS FAIRE « pip install -U »
+# ---------------------------------------------------------------------------
+# Le processeur de ce serveur est un « Common KVM processor » qui n'expose PAS
+# le jeu d'instructions x86-64-v2 : ni sse4_1, ni sse4_2, ni ssse3, ni popcnt
+# (vérifié dans /proc/cpuinfo le 2026-09-28).
+#
+# NumPy >= 2 est compilé avec ce niveau EN BASE et refuse de démarrer :
+#
+#     NumPy was built with baseline optimizations (X86_V2)
+#     but your machine doesn't support (X86_V2)
+#
+# Ce n'est pas un avertissement, c'est une erreur à l'IMPORT — et rien dans le
+# message ne fait penser au processeur, donc le diagnostic coûte cher.
+#
+# Aujourd'hui « pip install numpy » installerait la 2.4.x : sans l'épinglage
+# ci-dessous, tout ce qui dépend de numpy tombe en panne d'un seul coup.
+#
+# numpy 1.26 fonctionne ; pandas 2.2 est la DERNIÈRE série compatible avec elle,
+# et pyreadstat dépend de pandas — la cascade doit rester cohérente.
+numpy==1.26.4
+pandas==2.2.3
+pyreadstat==1.3.6    # lecture/écriture .dta et .sav avec value labels
+
+# ---------------------------------------------------------------------------
+# À quoi servent réellement pandas et pyreadstat ici
+# ---------------------------------------------------------------------------
+# Installés le 2026-09-28, à la demande de l'utilisateur. Un seul module les
+# utilise : `charger_ce_vad.py` (chargement du chef d'équipe VAD depuis
+# interview__actions.dta).
+#
+# Ils ne sont PAS nécessaires au fonctionnement de l'application : le serveur,
+# les tableaux de bord, l'export et le listing des erreurs VAD n'en dépendent
+# pas. `vad_listing.charger_ce()` fait le même travail que `charger_ce_vad.py`
+# avec `lire_dta`, en Python pur — les deux ont été comparés et donnent le même
+# résultat. Si un jour ces paquets posent problème, on peut les retirer sans
+# toucher à l'application.

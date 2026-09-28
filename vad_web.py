@@ -2183,9 +2183,13 @@ def page(section, agg, portee, retour="/choix", liens_zone=""):
 </aside>
 <main class="main"><div class="page active">
   <div class="page-head"><h1>{ESC(titre)}</h1>
-  <a class="btn btn-primary" href="{pref}/vad/rapport.xlsx"
-     title="Classeur Excel du périmètre affiché : Global, Erreur ménage, Erreur Individu, les deux volets du test de qualité de données, et l'écart déclaration-serveur par agent."
+  <a class="btn btn-primary" href="{pref}/vad/listing.zip"
+     title="Archive ZIP : tableau de bord, fichiers d'erreurs pour les Experts Survey Solutions (par lots de 199 ménages) et un classeur par chef d'équipe. Mêmes contrôles et mêmes colonnes que le do-file Stata."
      >⬇ Rapport Excel</a>
+  <a class="btn" href="{pref}/vad/rapport.xlsx"
+     style="margin-left:.4rem;font-size:.82rem"
+     title="Le classeur de synthèse propre à l'application : Global, Erreur ménage, Erreur Individu, les deux volets du test de qualité de données, et l'écart déclaration-serveur par agent."
+     >Synthèse (1 classeur)</a>
   <p class="page-sub">{ESC(portee)}</p></div>
   {corps}
 </div></main>
@@ -2290,6 +2294,23 @@ def _data_section(section, a):
 
 
 _JS = r"""
+/* Horodatage des exports : on ajoute aux liens de telechargement le DECALAGE
+   HORAIRE DU POSTE, pour que le nom des fichiers porte l'heure de l'utilisateur
+   et non celle du serveur, qui tourne en UTC. Le do-file Stata s'execute sur le
+   poste : c'est l'heure locale qui fait foi.
+   Si ce script ne s'execute pas, le serveur retombe sur sa propre horloge —
+   le telechargement fonctionne quand meme. */
+(function () {
+  var tz = -new Date().getTimezoneOffset();        /* minutes a l'EST de UTC */
+  var liens = document.querySelectorAll(
+    'a[href*="/vad/listing.zip"], a[href*="/vad/rapport.xlsx"]');
+  for (var i = 0; i < liens.length; i++) {
+    var a = liens[i];
+    if (a.href.indexOf('tz=') >= 0) { continue; }
+    a.href += (a.href.indexOf('?') >= 0 ? '&' : '?') + 'tz=' + tz;
+  }
+})();
+
 const PAL = ['#2563eb','#0ea5e9','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4',
              '#ec4899','#84cc16','#f97316','#14b8a6','#a855f7','#64748b','#eab308'];
 const coul = i => PAL[i % PAL.length];

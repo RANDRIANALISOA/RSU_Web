@@ -333,28 +333,13 @@ def transcrire(conn, dossier, log=None, dry_run=False, exclure_cles=None) -> dic
 
 def synchroniser_agents(conn) -> int:
     """Crée dans `agent` tout code de `vad_diagnostics.responsible` qui y manque
-    (nom = le code), comme `equipes.synchroniser_agents` pour le dénombrement."""
+    (nom = le code), AVEC son district : même règle que pour le dénombrement
+    (`equipes.synchroniser_agents_detail`), le district des interviews étant
+    ici `vad_menage.CQ7`. Renvoie le nombre d'agents créés."""
     import equipes
-    equipes.creer_tables(conn)
-    cur = conn.cursor()
-    try:
-        cur.execute(f'SELECT DISTINCT "responsible" FROM "{TABLE_DIAG}" '
-                    'WHERE "responsible" IS NOT NULL')
-        codes = [txt(r[0]) for r in cur.fetchall()]
-    except Exception:
-        return 0
-    ph = db_source._placeholder(conn)
-    ajoutes = 0
-    for c in codes:
-        if not c:
-            continue
-        cur.execute(f'SELECT 1 FROM "agent" WHERE "login_ae"={ph}', (c,))
-        if cur.fetchone() is None:
-            cur.execute('INSERT INTO "agent" ("login_ae","nom_prenom_ae","login_ce") '
-                        f'VALUES ({ph},{ph},NULL)', (c, c))
-            ajoutes += 1
-    conn.commit()
-    return ajoutes
+    return equipes.synchroniser_agents_detail(
+        conn, table_diag=TABLE_DIAG, table_menage=TABLE_MENAGE,
+        col_district="CQ7")["crees"]
 
 
 # ---------------------------------------------------------------------------

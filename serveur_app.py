@@ -31,6 +31,7 @@ import re
 import secrets
 import shutil
 import socketserver
+import sys
 import tempfile
 import threading
 import time
@@ -49,12 +50,16 @@ import maj_db
 import transcription
 import logistique
 import equipes
+import equipes_liste
 import declarations
 import vad_db
+import cache_version
+import sessions
 import vad_core
 import vad_web
 import export_rapport
 import export_vad
+import vad_listing
 import prechargement
 import limites_db
 import manuel
@@ -73,8 +78,71 @@ PORT = 8000
 PREFIXE = config.PREFIXE            # toute l'appli est servie sous /rsu (config.py)
 COOKIE_SESSION = "rsu_session"
 # Jetons de session valides -> identifiant connecté.
-_SESSIONS = {}
+# Les sessions vivent en BASE (`sessions.py`), plus en memoire du processus.
+# C'est ce qui permettra plusieurs processus — et ce qui fait qu'un redemarrage
+# ne deconnecte plus personne. Le verrou ne protege donc plus un dictionnaire
+# partage : il garde les lectures-modifications-ecritures d'un meme
+# dictionnaire, local a un processus.
 _SESSIONS_LOCK = threading.Lock()
+# La derniere activite n'est reecrite qu'au-dela de ce delai : une ecriture par
+# requete pour un simple horodatage serait du gaspillage.
+DELAI_VU = 60
+_ABSENT = object()
+
+
+class _Session(dict):
+    """Dictionnaire de session qui RETIENT s'il a ete modifie.
+
+    Dix-sept endroits modifient la session (selection de district, caches des
+    bulles, consignes lues...). Les recenser un par un pour y ajouter une
+    ecriture serait fragile : il suffirait d'en oublier un, ou qu'on en ajoute
+    un plus tard, pour qu'une modification disparaisse silencieusement.
+    On marque donc la modification ici, et `_flush_session()` ecrit UNE FOIS en
+    fin de requete, quel que soit le chemin suivi au milieu.
+    """
+
+    sale = False
+
+    def __setitem__(self, cle, valeur):
+        if self.get(cle, _ABSENT) != valeur:
+            self.sale = True
+        dict.__setitem__(self, cle, valeur)
+
+    def pop(self, cle, *defaut):
+        if cle in self:
+            self.sale = True
+        return dict.pop(self, cle, *defaut)
+
+    def setdefault(self, cle, valeur=None):
+        if cle not in self:
+            self.sale = True
+        return dict.setdefault(self, cle, valeur)
+
+    def update(self, *a, **kw):
+        self.sale = True
+        return dict.update(self, *a, **kw)
+
+
+def _enregistrer_session(sess) -> None:
+    """Ecrit la session en base."""
+    if not sess or not sess.get("jeton"):
+        return
+    conn = db_source.connect()
+    try:
+        sessions.ecrire(conn, sess["jeton"], sess)
+    except Exception:
+        pass            # une session non enregistree ne doit pas rendre un 500
+    finally:
+        conn.close()
+
+
+def _flush_session(handler) -> None:
+    """Fin de requete : ecrit la session si elle a change, et une seule fois."""
+    sess = getattr(handler, "_sess_courante", None)
+    if sess is None or not getattr(sess, "sale", False):
+        return
+    _enregistrer_session(sess)
+    sess.sale = False
 # Expiration par INACTIVITÉ : une session sans requête depuis ce délai est invalidée
 # (l'utilisateur doit se reconnecter). Le cookie a aussi une durée max absolue (8 h).
 INACTIVITE_MAX = 30 * 60   # secondes (30 min)
@@ -91,6 +159,13 @@ TOTAL_MENAGES = 0
 ARBRE_GEO = {"provinces": [], "regions": {}, "districts": {}}
 # Cache des rapports fokontany déjà générés : code -> HTML.
 _CACHE = {}
+# Version des donnees connue de CE processus. Si la base en annonce une plus
+# recente, c'est qu'un AUTRE processus a transcrit : nos caches sont perimes.
+_CACHE_VERSION = [-1]
+_CACHE_VERSION_VU = [0.0]
+# On ne relit pas le compteur a chaque requete : une page legere coute 1 ms, et
+# une transcription dure des secondes. Deux secondes de retard au pire.
+DELAI_VERSION = 2.0
 _CACHE_LOCK = threading.Lock()
 
 
@@ -100,6 +175,52 @@ def _vider_cache() -> None:
     une page mise en cache resservirait d'anciens codes/valeurs."""
     with _CACHE_LOCK:
         _CACHE.clear()
+    # Les agregats VAD ont leur propre cache : le purger ici aussi, sinon une
+    # transcription resterait invisible au tableau de bord jusqu'a 60 s.
+    try:
+        vad_core.vider_cache()
+    except Exception:
+        pass
+    # Et surtout : prévenir les AUTRES processus. Sans cet incrément, chacun
+    # garderait son propre cache — `_CACHE` n'ayant aucune durée de vie, il
+    # servirait un rapport périmé indéfiniment.
+    conn = db_source.connect()
+    try:
+        _CACHE_VERSION[0] = cache_version.incrementer(conn)
+        _CACHE_VERSION_VU[0] = time.time()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def _synchroniser_cache(force=False) -> None:
+    """Vide les caches LOCAUX si un autre processus a modifié les données.
+
+    Appelé une fois par requête. Le premier appel d'un processus fraîchement
+    démarré aligne simplement sa version sans rien vider.
+    """
+    maintenant = time.time()
+    if not force and maintenant - _CACHE_VERSION_VU[0] < DELAI_VERSION:
+        return
+    _CACHE_VERSION_VU[0] = maintenant
+    conn = db_source.connect()
+    try:
+        v = cache_version.lire(conn)
+    except Exception:
+        return
+    finally:
+        conn.close()
+    if v == _CACHE_VERSION[0]:
+        return
+    if _CACHE_VERSION[0] != -1:      # -1 = on vient de démarrer, rien à vider
+        with _CACHE_LOCK:
+            _CACHE.clear()
+        try:
+            vad_core.vider_cache()
+        except Exception:
+            pass
+    _CACHE_VERSION[0] = v
 
 
 # ---------------------------------------------------------------------------
@@ -1534,22 +1655,35 @@ def _session(handler):
     if not morceau:
         return None
     jeton = morceau.value
-    with _SESSIONS_LOCK:
-        sess = _SESSIONS.get(jeton)
-    if sess is None:
-        return None
-    now = time.time()
-    if now - sess.get("_vu", now) > INACTIVITE_MAX:      # trop longtemps inactif
-        with _SESSIONS_LOCK:
-            _SESSIONS.pop(jeton, None)
-        try:                                             # clôt la session au journal
-            conn = db_source.connect()
-            journal.fermer(conn, jeton)
-            conn.close()
-        except Exception:
-            pass
-        return None
-    sess["_vu"] = now
+    # Une seule lecture en base par requete : `_session()` est appele plusieurs
+    # fois le long d'un traitement.
+    deja = getattr(handler, "_sess_courante", None)
+    if deja is not None and deja.get("jeton") == jeton:
+        return deja
+    conn = db_source.connect()
+    try:
+        brut_sess = sessions.lire(conn, jeton)
+        if brut_sess is None:
+            return None
+        now = time.time()
+        vu = brut_sess.get("_vu", now)
+        if now - vu > INACTIVITE_MAX:                    # trop longtemps inactif
+            sessions.supprimer(conn, jeton)
+            try:                                         # clôt la session au journal
+                journal.fermer(conn, jeton)
+            except Exception:
+                pass
+            return None
+        if now - vu > DELAI_VU:
+            sessions.toucher(conn, jeton, now)
+    finally:
+        conn.close()
+    sess = _Session(brut_sess)
+    # `_vu` pose SANS marquer la session modifiee : il a sa propre colonne et
+    # son propre rythme d'ecriture (`toucher`), sinon chaque requete
+    # declencherait une reecriture complete du JSON.
+    dict.__setitem__(sess, "_vu", now)
+    handler._sess_courante = sess
     return sess
 
 
@@ -3562,6 +3696,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        """Point d'entree GET. Le routage est dans `_router_GET` ; ici on
+        garantit seulement que la session modifiee est ecrite UNE FOIS, quel
+        que soit le chemin suivi — y compris en cas d'exception."""
+        _synchroniser_cache()
+        try:
+            self._router_GET()
+        finally:
+            _flush_session(self)
+
+    def _router_GET(self):
         brut = self.path.split("?", 1)[0]
         # Toute l'appli vit sous /rsu : on ramène les URL sans préfixe.
         if brut in ("/", ""):
@@ -3637,6 +3781,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Chaque rôle ne voit que l'équipe de SON district (résolu par perimetre()).
         if chemin == "/equipe":
             self._equipe_get(sess)
+            return
+
+        # Liste des Chefs d'Équipe et des Agents Enquêteurs : filtres,
+        # modification, suppression. Ouverte à Admin / Traitement / Expert
+        # survey, et placée AVANT les gardes de rôle — celles-ci renverraient
+        # sinon Traitement et Expert vers leur seul espace. Le périmètre
+        # géographique est appliqué dans equipes_liste, pas ici.
+        if chemin in ("/equipes", "/equipes/ce/modifier", "/equipes/ae/modifier",
+                      "/equipes/ce/ajouter", "/equipes/ae/ajouter"):
+            self._equipes_liste_get(sess, chemin)
             return
 
         # Battement de coeur de la SAISIE du journal : appelé par la page de
@@ -3755,6 +3909,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if chemin == "/vad/rapport.xlsx":
             self._vad_export_get(sess)           # classeur Rapport_VAD_<date>
             return
+        if chemin == "/vad/listing.zip":
+            self._vad_listing_get(sess)          # les 4 classeurs du do-file
+            return
         if chemin == "/vad" or chemin.startswith("/vad/"):
             self._vad_get(chemin, sess)
             return
@@ -3780,6 +3937,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # atteint via <menu>?op=den, la sélection via POST /suivi.)
             if role in _MENU_CHEMINS:
                 self._redirige(_MENU_CHEMINS[role])
+                return
+            # Rôle à DISTRICT UNIQUE (Traitement, Expert survey) : la page de
+            # sélection ne lui demanderait rien qu'on ne sache déjà — son
+            # district est imposé par son affectation, et le type de suivi est
+            # le dénombrement (la VAD a son propre accès). On l'envoie donc
+            # DIRECTEMENT au tableau de bord. `?op=vad` reste possible pour
+            # atteindre le tableau de bord VAD sans repasser par l'écran.
+            districts_perim = perimetre(u)[0]
+            if districts_perim is not None and len(districts_perim) == 1:
+                op = urllib.parse.parse_qs(
+                    urllib.parse.urlsplit(self.path).query).get("op", [""])[0].strip()
+                if op not in ("den", "vad"):
+                    op = "den"
+                if self._selection_district_unique(sess, districts_perim, op):
+                    self._redirige("/suivi")
                 return
             # Autres rôles (ex. Comités Techniques) : sélection classique
             # (choix zone + type de suivi).
@@ -3969,6 +4141,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return ("ok", acom)
 
     def do_POST(self):
+        """Point d'entree POST — meme role que `do_GET`."""
+        _synchroniser_cache()
+        try:
+            self._router_POST()
+        finally:
+            _flush_session(self)
+
+    def _router_POST(self):
         brut = self.path.split("?", 1)[0]
         if not (brut == PREFIXE or brut.startswith(PREFIXE + "/")):
             self._html(page_erreur("Page inconnue.", 404), 404)
@@ -4006,6 +4186,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._transcription_vad_post(chemin)
         elif chemin.startswith("/declaration/"):
             self._declaration_post(chemin)
+        elif chemin.startswith("/equipes/"):
+            self._equipes_liste_post(chemin)
         elif chemin == "/traitement/equipes":
             self._traitement_equipes_post()
         elif chemin == "/traitement/prechargement":
@@ -4055,8 +4237,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         conn = db_source.connect()
         try:
             if chemin == "/admin":
-                with _SESSIONS_LOCK:
-                    nb = len(_SESSIONS)
+                nb = sessions.compter(conn, INACTIVITE_MAX)
                 self._html(admin.page_admin(conn, u, nb))
             elif chemin == "/admin/utilisateurs":
                 qs = urllib.parse.parse_qs(self.path.split("?", 1)[1]
@@ -4258,6 +4439,122 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _district_txt(self, conn, code):
         lib = zones.libelles_district(conn, code)
         return f"{lib[2]} ({code})" if lib else str(code)
+
+    # -----------------------------------------------------------------------
+    # Chefs d'équipe et agents : consultation, modification, suppression
+    # -----------------------------------------------------------------------
+    def _equipes_utilisateur(self, sess):
+        """Le compte connecté s'il a le droit d'accéder à /equipes, sinon None.
+
+        On redirige vers l'espace du rôle plutôt que d'afficher une erreur : un
+        Logistique qui tombe sur cette URL n'a rien à y faire, mais ce n'est pas
+        une faute de sa part.
+        """
+        u = (sess or {}).get("utilisateur") or {}
+        if not equipes_liste.autorise(u):
+            self._redirige(accueil_role((u.get("responsabilite") or "").strip()))
+            return None
+        return u
+
+    def _equipes_liste_get(self, sess, chemin):
+        u = self._equipes_utilisateur(sess)
+        if u is None:
+            return
+        qs = urllib.parse.parse_qs(
+            self.path.split("?", 1)[1] if "?" in self.path else "")
+
+        def g(cle):
+            return (qs.get(cle, [""])[0]).strip()
+
+        conn = db_source.connect()
+        try:
+            genre = "ce" if "/ce/" in chemin else "ae"
+            if chemin.endswith("/ajouter"):
+                self._html(equipes_liste.page_ajouter(conn, u, genre))
+            elif chemin.endswith("/modifier"):
+                self._html(equipes_liste.page_modifier(conn, u, genre, g("login")))
+            else:
+                # Le numéro de page vient de l'URL : on le borne à un entier
+                # positif, page_liste se charge de le ramener dans les limites.
+                try:
+                    page = max(1, int(g("page") or 1))
+                except ValueError:
+                    page = 1
+                self._html(equipes_liste.page_liste(
+                    conn, u, onglet=g("onglet") or "ce", district=g("district"),
+                    texte=g("q"), chef=g("chef"), page=page,
+                    message=g("msg") or None, erreur=g("err") or None))
+        finally:
+            conn.close()
+
+    def _equipes_liste_post(self, chemin):
+        sess = _session(self)
+        if sess is None:
+            self._redirige("/login")
+            return
+        u = self._equipes_utilisateur(sess)
+        if u is None:
+            return
+
+        c = self._corps_formulaire()
+
+        def g(cle):
+            return (c.get(cle, [""])[0]).strip()
+
+        login = g("login")
+        genre = "ce" if "/ce/" in chemin else "ae"
+        message = erreur = ""
+        conn = db_source.connect()
+        try:
+            if chemin.endswith("/ajouter"):
+                if genre == "ce":
+                    cree = equipes_liste.ajouter_chef(
+                        conn, u, g("login"), g("nom"), g("district"))
+                else:
+                    cree = equipes_liste.ajouter_agent(
+                        conn, u, g("login"), g("nom"), g("chef"), g("district"))
+                message = f"{cree} créé."
+            elif chemin.endswith("/supprimer"):
+                if genre == "ce":
+                    n = equipes_liste.supprimer_chef(
+                        conn, u, login, detacher=bool(g("detacher")))
+                    message = (f"Chef d'équipe {login} supprimé"
+                               + (f" ; {n} agent(s) détaché(s)." if n else "."))
+                else:
+                    equipes_liste.supprimer_agent(conn, u, login)
+                    message = f"Agent {login} supprimé."
+            else:
+                if genre == "ce":
+                    equipes_liste.modifier_chef(conn, u, login, g("nom"),
+                                                g("district"))
+                else:
+                    equipes_liste.modifier_agent(conn, u, login, g("nom"),
+                                                 g("chef"), g("district"))
+                message = f"{login} enregistré."
+        except (ValueError, PermissionError) as e:
+            erreur = str(e)
+            if chemin.endswith("/ajouter"):
+                conn2 = db_source.connect()
+                try:
+                    page = equipes_liste.page_ajouter(
+                        conn2, u, genre,
+                        valeurs={"login": g("login"), "nom": g("nom"),
+                                 "chef": g("chef"), "district": g("district")},
+                        erreur=erreur)
+                finally:
+                    conn2.close()
+                conn.close()
+                self._html(page)
+                return
+        finally:
+            conn.close()
+
+        params = {"onglet": genre}
+        if message:
+            params["msg"] = message
+        if erreur:
+            params["err"] = erreur
+        self._redirige("/equipes?" + urllib.parse.urlencode(params))
 
     def _equipe_get(self, sess):
         """Fiche « Équipe technique » du district d'affectation de l'utilisateur.
@@ -5151,6 +5448,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._redirige("/consignes/nouvelle?supprime=1" if supprime
                        else "/consignes/nouvelle")
 
+    def _selection_district_unique(self, sess, districts_perim, suivi):
+        """Prépare la sélection d'un rôle à DISTRICT UNIQUE, sans passer par
+        l'écran de choix.
+
+        Rend True si la sélection est prête (l'appelant redirige vers /suivi),
+        False si le district est introuvable au référentiel — auquel cas la page
+        d'erreur a déjà été envoyée.
+
+        Le district vient de `perimetre()`, jamais d'une saisie : c'est la même
+        source de vérité que la validation du POST de sélection.
+        """
+        code = sorted(districts_perim)[0]
+        conn = db_source.connect()
+        try:
+            libs = zones.libelles_district(conn, code)
+        finally:
+            conn.close()
+        if not libs:
+            self._html(page_erreur("District inconnu dans le référentiel.", 400), 400)
+            return False
+        province_nom, region_nom, district_nom = libs
+        with _SESSIONS_LOCK:
+            sess["selection"] = {
+                "code_district": int(code), "province_nom": province_nom,
+                "region_nom": region_nom, "district_nom": district_nom,
+                "limites": "ocha", "chemin_limites": "", "suivi": suivi}
+        return True
+
     def _menu_operation_get(self, sess, u, role, op):
         """Menu d'opération des rôles de _ROLES_MENU_OPERATION (Coordonnateurs +
         Superviseur Technique) et son aiguillage selon l'opération choisie.
@@ -5177,22 +5502,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Tableau de bord (dénombrement OU VAD) : district imposé -> on prépare
             # la sélection et on ouvre /suivi (den -> vue générale du dénombrement ;
             # vad -> tableau de bord VAD).
-            code = sorted(districts_perim)[0]
-            conn = db_source.connect()
-            try:
-                libs = zones.libelles_district(conn, code)
-            finally:
-                conn.close()
-            if not libs:
-                self._html(page_erreur("District inconnu dans le référentiel.", 400), 400)
-                return
-            province_nom, region_nom, district_nom = libs
-            with _SESSIONS_LOCK:
-                sess["selection"] = {
-                    "code_district": int(code), "province_nom": province_nom,
-                    "region_nom": region_nom, "district_nom": district_nom,
-                    "limites": "ocha", "chemin_limites": "", "suivi": op}
-            self._redirige("/suivi")
+            if self._selection_district_unique(sess, districts_perim, op):
+                self._redirige("/suivi")
             return
         # Coordonnateurs : choix du district, opération déjà fixée.
         self._html(page_selection(utilisateur=u, op=op))
@@ -5595,6 +5906,66 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                                            (sess or {}).get("vad_district"))),
                    prefixer=False)          # liens déjà préfixés à la source
 
+    def _vad_listing_get(self, sess):
+        """GET /vad/listing.zip : le LISTING DES ERREURS VAD, en archive.
+
+        Portage du do-file INSTAT `do_listing_erreur_VAD_RSU_V2.do` (cf.
+        `vad_listing`) : memes controles, memes colonnes, memes messages en
+        malgache. Quatre familles de classeurs :
+
+            TABLEAU_DE_BORD_VAD_<district>_<date>.xlsx
+            base_erreur_menage_numero_X_<date>.xlsx      -> Experts Survey
+            base_erreur_membre_numero_X_<date>.xlsx      -> Experts Survey
+            ERREUR_MENAGE_<CE>_<date>.xlsx               -> SupTech / CE
+
+        Le contenu depend du ROLE : le Superviseur Technique recoit le tableau
+        de bord et les fichiers par chef d'equipe, PAS ceux destines aux Experts
+        Survey Solutions — ce n'est pas lui qui corrige dans le systeme.
+
+        Le perimetre vient de `_vad_perimetre`, jamais de l'URL : un SupTech
+        borne a ses communes ne recevra donc que SES chefs d'equipe.
+        """
+        u = (sess or {}).get("utilisateur")
+        if not u:
+            self._redirige("/")
+            return
+        role = (u.get("responsabilite") or "").strip()
+        if not vad_listing.autorise(role):
+            self._html(page_erreur(
+                "Le listing des erreurs VAD est reserve au Traitement, aux "
+                "Experts survey, aux Coordonnateurs et aux Superviseurs "
+                "Techniques.", 403), 403)
+            return
+        districts, communes, _lib = self._vad_perimetre(
+            u, (sess or {}).get("vad_district"))
+        conn = db_source.connect()
+        try:
+            if not vad_db.tables_presentes(conn):
+                self._redirige("/vad/general")
+                return
+            # L'heure du POSTE, transmise par le lien (`?tz=`), pour que le
+            # nom des fichiers ne soit pas en UTC. Repli silencieux sur
+            # l'horloge du serveur si le navigateur ne l'a pas fournie.
+            tz = vad_listing.decalage_client(
+                (urllib.parse.parse_qs(
+                    urllib.parse.urlsplit(self.path).query).get("tz")
+                 or [""])[0])
+            nom, data = vad_listing.generer_zip(conn, role, districts, communes,
+                                                decalage=tz)
+            # Consigne AVANT de fermer : ces classeurs sortent des donnees
+            # nominatives du serveur, on veut savoir qui les a emportes.
+            try:
+                journal.consigner(
+                    conn, u.get("login") or "-", u.get("nom_prenom") or "-",
+                    vad_listing.libelle_district(districts),
+                    "Listing erreurs VAD", "Reussi",
+                    detail=f"Archive {nom} ({len(data)} octets), role {role}.")
+            except Exception:
+                pass          # un defaut de journal ne prive personne du fichier
+        finally:
+            conn.close()
+        self._octets(data, "application/zip", nom)
+
     def _vad_export_get(self, sess):
         """GET /vad/rapport.xlsx : le classeur « Rapport_VAD_<district>_<AAAAMMJJ>_<HHMM> ».
 
@@ -5619,7 +5990,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._octets(
             data,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            export_vad.nom_fichier(districts))
+            export_vad.nom_fichier(districts, vad_listing.maintenant(
+                vad_listing.decalage_client(
+                    (urllib.parse.parse_qs(
+                        urllib.parse.urlsplit(self.path).query).get("tz")
+                     or [""])[0]))))
 
     def _transcription_vad_post(self, chemin):
         """POST /transcription/vad/{upload,transcrire} : ingestion des données VAD.
@@ -5889,7 +6264,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if chemin == "/traitement":
                 self._html(equipes.page_choix_traitement(txt))
             elif chemin == "/traitement/equipes":
-                self._html(equipes.page_equipes(conn, txt))
+                self._html(equipes.page_equipes(conn, txt, district=code))
             elif chemin == "/traitement/prechargement":
                 q = urllib.parse.parse_qs(
                     urllib.parse.urlparse(self.path).query)
@@ -5968,16 +6343,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 with open(p_agent, "wb") as f:
                     f.write(data_agent)
                 try:
-                    resultat = equipes.transcrire(conn, p_chef, p_agent)
+                    # Le district vient de l'AFFECTATION de celui qui
+                    # téléverse : il n'est pas dans le fichier, et le modèle
+                    # Excel reste inchangé.
+                    resultat = equipes.transcrire(
+                        conn, p_chef, p_agent,
+                        district=int(code) if code else None)
                     c, a = resultat["chefs"], resultat["agents"]
                     message = (f"Transcription terminée : Chefs +{c['ajoutes']}/"
                                f"~{c['modifies']} · Agents +{a['ajoutes']}/"
                                f"~{a['modifies']}.")
+                    # Le district vient de l'affectation, pas du fichier : on
+                    # dit ce qui a été posé, sinon personne ne saurait que
+                    # cette colonne s'est remplie toute seule.
+                    poses = resultat.get("districts_poses", 0)
+                    if poses:
+                        message += (f" District « {txt} » renseigné sur "
+                                    f"{poses} fiche(s).")
+                    conflits = resultat.get("conflits") or []
+                    if conflits:
+                        # Conservés, pas appliqués : un téléversement ne déplace
+                        # pas une équipe d'un district à un autre en silence.
+                        apercu = ", ".join(f"{g} {lg}" for g, lg, _ in conflits[:5])
+                        if len(conflits) > 5:
+                            apercu += f" (+{len(conflits) - 5} autre(s))"
+                        erreur = (f"⚠️ {len(conflits)} fiche(s) appartiennent "
+                                  f"déjà à un AUTRE district : leur district a "
+                                  f"été <b>conservé</b>, rien n'a été déplacé. "
+                                  f"Concernées : {htmllib.escape(apercu)}.")
                     _vider_cache()   # noms d'agents changés -> rapport à régénérer
                 except ValueError as e:            # colonnes manquantes, etc.
                     erreur = htmllib.escape(str(e))
             page = equipes.page_equipes(conn, txt, resultat=resultat,
-                                        message=message, erreur=erreur)
+                                        message=message, erreur=erreur,
+                                        district=code)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
             conn.close()
@@ -6254,12 +6653,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             u = utilisateurs.authentifier(conn, login, mdp)
             if u:
                 jeton = secrets.token_hex(16)
-                with _SESSIONS_LOCK:
-                    # `_consignes_modale` : la 1re page HTML servie ouvrira la
-                    # fenêtre des consignes non lues (cf. modale_consignes).
-                    _SESSIONS[jeton] = {"login": u["login"], "selection": None,
-                                        "utilisateur": u, "jeton": jeton,
-                                        "_consignes_modale": True}
+                # `_consignes_modale` : la 1re page HTML servie ouvrira la
+                # fenêtre des consignes non lues (cf. modale_consignes).
+                sessions.ecrire(conn, jeton, {
+                    "login": u["login"], "selection": None,
+                    "utilisateur": u, "jeton": jeton,
+                    "_consignes_modale": True, "_vu": time.time()})
                 journal.ouvrir(conn, jeton, u["login"], u.get("nom_prenom", ""),
                                u.get("responsabilite", ""), ip)
             else:
@@ -6478,11 +6877,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             morceau = http.cookies.SimpleCookie(brut).get(COOKIE_SESSION)
             if morceau:
                 jeton = morceau.value
-                with _SESSIONS_LOCK:
-                    _SESSIONS.pop(jeton, None)
         if jeton:
             conn = db_source.connect()
             try:
+                sessions.supprimer(conn, jeton)
                 journal.fermer(conn, jeton)          # fige la durée de la session
             finally:
                 conn.close()
@@ -6493,24 +6891,144 @@ class Handler(http.server.BaseHTTPRequestHandler):
         print("[app]", fmt % args)
 
 
+# Nombre de processus qui servent les requetes. 0 ou absent = un par coeur.
+# Un processus Python n'execute du bytecode que sur UN coeur a la fois (GIL) :
+# c'est le nombre de processus, pas de threads, qui decide de l'usage des coeurs.
+def _nb_processus() -> int:
+    brut = os.environ.get("RSU_PROCESSUS", "").strip()
+    if brut.isdigit() and int(brut) > 0:
+        return int(brut)
+    return max(1, os.cpu_count() or 1)
+
+
+NB_PROCESSUS = _nb_processus()
+
+
+def _servir(httpd):
+    """Boucle de service d'UN processus."""
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+def _superviser(httpd, nb):
+    """Parent : se dedouble `nb` fois, puis surveille.
+
+    Le parent ne sert AUCUNE requete. Il ne fait que relancer un enfant qui
+    meurt — c'est ce qui manquait jusqu'ici : `Restart=always` de systemd ne
+    voit qu'un processus, et ne rattrape pas un travailleur fige ou tue.
+    """
+    import signal
+
+    enfants = set()
+
+    def _naitre():
+        pid = os.fork()
+        if pid == 0:                      # --- ENFANT ---
+            # Ne pas heriter des connexions du parent : une connexion SQLite ne
+            # traverse pas un fork (verrous lies au processus).
+            try:
+                db_source.vider_pool()
+            except Exception:
+                pass
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            _servir(httpd)
+            os._exit(0)
+        enfants.add(pid)
+        return pid
+
+    arret = {"demande": False}
+
+    def _arreter(signum, frame):
+        arret["demande"] = True
+        for pid in list(enfants):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+
+    signal.signal(signal.SIGTERM, _arreter)
+    signal.signal(signal.SIGINT, _arreter)
+
+    for _ in range(nb):
+        _naitre()
+    print(f"[app] {nb} processus de service : {sorted(enfants)}")
+
+    while enfants and not arret["demande"]:
+        try:
+            pid, statut = os.wait()
+        except InterruptedError:
+            continue
+        except ChildProcessError:
+            break
+        enfants.discard(pid)
+        if arret["demande"]:
+            continue
+        # Un travailleur est mort : on le remplace. Sans cela, la capacite
+        # baisserait silencieusement jusqu'a ce qu'il n'en reste plus un seul.
+        print(f"[app] processus {pid} arrete (statut {statut}) — remplace")
+        _naitre()
+
+    for pid in list(enfants):             # attendre la fin des enfants
+        try:
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+    print("[app] arret du serveur.")
+
+
 def main():
     print("Préparation de la base et du menu…")
     preparer()
+    # Table des sessions, et purge de celles qu'on ne reverra jamais : personne
+    # ne revient fermer une session abandonnee.
+    _c = db_source.connect()
+    try:
+        print(f"[app] mode SQLite : {db_source.activer_wal()}")
+        sessions.creer_table(_c)
+        cache_version.creer_table(_c)
+        _CACHE_VERSION[0] = cache_version.lire(_c)
+        _n = sessions.purger(_c, INACTIVITE_MAX)
+        if _n:
+            print(f"[app] {_n} session(s) expiree(s) purgee(s).")
+    finally:
+        _c.close()
+
     # Réutiliser l'adresse : redémarrage immédiat même si le port est en TIME_WAIT.
     socketserver.ThreadingTCPServer.allow_reuse_address = True
+    # File d'attente des connexions. La valeur par defaut de `socketserver` est
+    # 5 : au-dela, le noyau fait patienter le client jusqu'a la retransmission
+    # TCP (~1 s mesuree des 30 requetes simultanees, le 2026-09-28). 128 est ce
+    # que le noyau accepte sans reglage particulier.
+    socketserver.ThreadingTCPServer.request_queue_size = 128
+    # Threads demon : un arret ne reste pas bloque par une requete en cours.
+    socketserver.ThreadingTCPServer.daemon_threads = True
+
     with socketserver.ThreadingTCPServer(("127.0.0.1", PORT), Handler) as httpd:
         url = f"http://127.0.0.1:{PORT}/"
+        # `fork` n'existe pas sous Windows : le poste de developpement reste en
+        # un seul processus, sans que rien d'autre change.
+        nb = NB_PROCESSUS if hasattr(os, "fork") else 1
         print(f"Application RSU (base de données) en ligne : {url}")
+        if nb > 1:
+            # Le pool du parent ne doit pas etre herite (cf. en-tete du fichier).
+            try:
+                db_source.vider_pool()
+            except Exception:
+                pass
+            _superviser(httpd, nb)
+            return
         print("Ctrl+C pour arrêter.")
-        try:
-            import webbrowser
-            webbrowser.open(url)
+        try:                               # ouverture du navigateur : seulement
+            if sys.stdout.isatty():        # en usage interactif, jamais en service
+                import webbrowser
+                webbrowser.open(url)
         except Exception:
             pass
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nArrêt du serveur.")
+        _servir(httpd)
+        print("\nArrêt du serveur.")
 
 
 if __name__ == "__main__":

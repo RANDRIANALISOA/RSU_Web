@@ -246,6 +246,8 @@ def _entete(actif="") -> str:
             f'{lien("/admin/utilisateurs","Utilisateurs","users")}'
             f'{lien("/admin/utilisateurs/ajouter","Ajouter","users_add")}'
             f'{lien("/admin/journal","Journal","journal")}'
+              # Chefs d'équipe et agents : consultation et correction des fiches.
+              f'<a href="/equipes">Équipes</a>'
             # Suppression des données d'un district : opération destructive,
             # réservée à l'Admin (cf. suppression.py).
             f'{lien("/admin/suppression","Suppression","suppr")}'

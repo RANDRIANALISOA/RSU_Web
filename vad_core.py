@@ -27,6 +27,8 @@ inspirée des définitions JMP (OMS/UNICEF), à faire valider par les statistici
 du RSU : ils ne viennent pas du questionnaire lui-même.
 """
 import math
+import threading
+import time
 import re
 from collections import Counter, defaultdict
 
@@ -2210,8 +2212,56 @@ def _doubles(menages, vad, aff, noms):
 # ---------------------------------------------------------------------------
 # Point d'entrée
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Cache des agregats — mesure le 2026-09-28 : 255 ms de calcul par appel pour
+# 228 menages. RSU-web tourne en UN SEUL processus : le GIL serialise ces
+# calculs, ils sont donc le plafond de debit des pages lourdes. Les donnees ne
+# bougent qu'aux transcriptions, pas entre deux clics.
+# ---------------------------------------------------------------------------
+CACHE_SECONDES = 60
+_CACHE_AGREGE = {}
+_CACHE_AGREGE_LOCK = threading.Lock()
+
+
+def vider_cache() -> None:
+    """Purge les agregats. Appele par `serveur_app._vider_cache()` apres TOUT
+    changement de donnees : sans cela une transcription resterait invisible
+    jusqu'a l'expiration."""
+    with _CACHE_AGREGE_LOCK:
+        _CACHE_AGREGE.clear()
+
+
 def agrege(conn, districts=None, communes=None, portee_lib="", section="",
            cible=None, commune=None, fokontany=None) -> dict:
+    """Agregats du tableau de bord VAD, avec cache de `CACHE_SECONDES`.
+
+    Le perimetre fait PARTIE de la cle : deux utilisateurs de perimetres
+    differents ne peuvent pas se voir servir le meme resultat.
+
+    Le dictionnaire rendu est une COPIE DE SURFACE. `serveur_app` y ecrit
+    `agg["agentSel"]` apres coup : sans cette copie, la selection d'un
+    utilisateur fuirait vers les suivants — un bug invisible en test a un seul
+    utilisateur, et systematique en production.
+    """
+    cle = (frozenset(districts) if districts else None,
+           frozenset(communes) if communes else None,
+           portee_lib, section, cible, commune, fokontany)
+    maintenant = time.time()
+    with _CACHE_AGREGE_LOCK:
+        garde = _CACHE_AGREGE.get(cle)
+        if garde is not None and maintenant - garde[0] < CACHE_SECONDES:
+            return dict(garde[1])
+    # Calcul HORS verrou : deux perimetres differents peuvent progresser en
+    # parallele, et une requete lente ne bloque pas les lectures du cache.
+    valeur = _agrege_calcul(conn, districts, communes, portee_lib, section,
+                            cible, commune, fokontany)
+    with _CACHE_AGREGE_LOCK:
+        _CACHE_AGREGE[cle] = (maintenant, valeur)
+    return dict(valeur)
+
+
+def _agrege_calcul(conn, districts=None, communes=None, portee_lib="", section="",
+                   cible=None, commune=None, fokontany=None) -> dict:
     """Tous les agrégats du tableau de bord VAD pour un périmètre.
 
     `section` évite un calcul lourd inutile : les tests de qualité (une

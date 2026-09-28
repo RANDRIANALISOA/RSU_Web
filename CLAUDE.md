@@ -8,150 +8,143 @@ des fichiers `.dta`, l'utilisateur ouvrira une **page dans son navigateur**, et
 l'application lira les données dans une **base PostgreSQL** pour afficher le même
 rapport interactif.
 
-> État (maj 2026-08-17) : l'application locale marche avec, dans `serveur_app.py` :
-> **login** vérifié en base avec **mots de passe hachés** (PBKDF2) et **comptes/rôles**
-> (`utilisateurs.py` : **9 rôles** via table de référence `responsabilite` (FK
-> `code_responsable`), dont **Admin** ; comptes avec **téléphone / CIN / e-mail**
-> (facultatifs, validés) ; **affectation** district(s)/communes par
-> clés étrangères, **RESPECTÉE** au routage : `perimetre(u)` + `_perimetre_vue`),
-> **page de sélection** Province/Région/District + limites + type de suivi (référentiel
-> `zones` depuis l'Excel `FKT_ampiasan_SS`), et un **dashboard multi-pages (MPA)** :
-> une page HTML par section chargée au clic (routes
-> `/vue/<section>[/commune|/fokontany/<code>]`), avec allègement des pages
-> district/commune par **agrégats calculés côté serveur** (Vue générale : 24 Mo→265 Ko,
-> ~92×, chiffres prouvés identiques). **Toutes les sections** ont la descente
-> commune→fokontany (sous-menu `<…-drill>` ; périmètre pris de `SCOPE`, pas des ménages),
-> et **« Segments multiples »** est agrégé aux 3 niveaux (district/commune/fokontany, par
-> triplet fokontany×code×**agent** — définition révisée le 2026-09-17). Chaque rôle atterrit sur SA page : **Admin** →
-> espace Admin (`/admin` : journal connexion + transcriptions, gestion utilisateurs =
-> **ajouter / MODIFIER (formulaire pré-rempli)** cascade + import Excel, couverture) ;
-> **Expert survey** → **ingestion**
-> (`/transcription` : choix Dénombrement / Visite à domicile ; téléversement du dossier
-> — **TOUS les fichiers et sous-dossiers** conservés, ex. `Questionnaire/` — →
-> validation → transcription incrémentale, journalisée) ; **Traitement** → **espace
-> Traitement** (`/traitement` : choix Tableau de bord OU **remplir la base Chef d'Équipe
-> / Agent** par téléversement de 2 Excel) ; **Logistique District /
-> Inter-Communale** → **espace Logistique & Finances** (`/logistique`, guide tiré du
-> manuel, pas de dashboard) ; les autres → sélection + dashboard borné à leur périmètre.
-> **Chefs d'Équipe et Agents** (`equipes.py`, tables `chef_equipe`/`agent`) sont **liés
-> au dénombrement** : le code agent `interview__diagnostics.responsible` est une **clé
-> étrangère** vers `agent(login_ae)` ; tout code du dénombrement absent d'`agent` y est
-> **auto-créé** (nom = le code) ; dans le rapport, le **nom** de l'agent s'affiche au
-> lieu du code s'il est renseigné (`agents_noms`). Le **CSS et Chart.js** sont dans
-> `assets/` (pages légères + graphiques hors-ligne),
-> les **images** dans `images/`. Les tables `.dta` sont **mises à jour incrémentalement**
-> (`maj_db.py`) et leurs codes géo sont des **clés étrangères** vers `zones`. Pages
-> dynamiques **non mises en cache** (`Cache-Control: no-store`).
-> **Nombre de ménages attendus** : la table `commune` a une colonne `"nombreMenage"`
-> (projection RGPH-3 2025) remplie depuis l'Excel dérivé `MENAGES_PAR_COMMUNE_2025.xlsx`
-> (`zones.charger_menages`, CLI `python zones.py menages`). Sur la page **Vue générale**
-> (district/commune), un panneau **COUVERTURE** compare le **dénombrement réalisé** à
-> l'attendu (taux, jours restants au rythme observé ; `rapport_core.couverture`), avec un
-> **tableau par commune** au niveau district. Un bouton **flottant « Exporter rapport »**
-> télécharge un **classeur Excel** (route `/export/rapport.xlsx`, module `export_rapport.py`) :
-> feuille **Rapport global** (couverture + **structure des ménages** par commune/fokontany),
-> feuille **Dénombrement par agent-jour** (un tableau par chef d'équipe), feuille
-> **BaseDenParAgent** (table plate agent×fokontany×date), feuille **segment_multiple**,
-> feuille **Écart par agent** (synthèse : un agent = une ligne) et feuille
-> **Écart déclaration-serveur** (le même écart, détaillé par date et par chef d'équipe).
-> **ÉCART DÉCLARATION ↔ SERVEUR, PAR AGENT — LES DEUX PHASES (maj 2026-09-21)** : la
-> page **« Par agent »** affiche désormais ce que chaque agent **DÉCLARE** avoir fait
-> face à ce qui est **ARRIVÉ AU SERVEUR** — 3 KPI, un graphique des 12 plus grands
-> écarts, un tableau (un agent = une ligne). **VAD** : page `/vad/agents` + feuille
-> **« Écart par agent »** du classeur VAD. **Dénombrement** : page `/vue/agent` au
-> niveau district (clic sur une ligne = détail par date) + feuilles **« Écart par
-> agent »** et **« Écart déclaration-serveur »**. Un seul calcul pour les quatre
-> sorties : `rapport_core.ecart_declaration`. La saisie des déclarations est devenue
-> **consciente de la phase** (agents et dates proposés par le modèle Excel).
-> Voir la section datée 2026-09-21.
-> **TABLEAU DE BORD (maj 2026-09-17)** : tout ce qui touchait au **carnet e-Fokontany**
-> (KPI « Avec carnet », deux graphiques « Possession de carnet », colonnes « % Avec carnet »,
-> colonne « Carnet » de l'export CSV) a été **RETIRÉ** — la question a disparu du
-> questionnaire de septembre 2026 et n'affichait plus que des « n/d ». À la place, une carte
-> KPI **« Taille moyenne des ménages »** (sous-titre : écart-type + nombre de personnes) et,
-> sur la page Qualité, moyenne + écart-type sous l'histogramme des tailles.
-> 📌 **Un BILAN DE SESSION daté du 2026-09-17/18 clôt ce fichier** : ce qui a été fait
-> (12 chantiers), les **leçons apprises**, et **ce qui reste à faire** — dont un point
-> à trancher d'urgence sur des données VAD chargées en production par erreur.
-> **CARTE GPS VAD + JOURNAUX D'INGESTION (maj 2026-09-20)** : la **carte GPS de la
-> VAD** reprend le fonctionnement de celle du dénombrement — fonds satellite (Bing,
-> Google, Esri), points colorés par **agent** (≤ 12 agents) ou par **date** au-delà,
-> filtres par agent et par date, bulle détaillée, contours **rouge = niveau affiché /
-> bleu = ses enfants** — et gagne une **descente District → Commune → Fokontany** en
-> sous-menu de la barre latérale (flèches de dépliage), bornée au périmètre du rôle.
-> Les contours sont servis **à part** (`/vad/contours.json`, allégés par
-> Douglas-Peucker : 2,3 Mo → 187 Ko) et le **bouton ☰** du dénombrement masque
-> désormais aussi la barre des sections du VAD (préférence partagée). Côté
-> **journaux d'ingestion** : les opérations VAD ressortaient en ROUGE (statut
-> « Succès » ≠ « Réussi » attendu par l'affichage) ; la couleur se décide maintenant
-> sur `journal.reussi()`, les deux phases ont **chacune leur journal** (Admin et
-> Expert survey), le district est **nommé** et les refus de téléversement VAD sont
-> enfin consignés. Voir la section datée 2026-09-20.
-> **EXPERT SURVEY (maj 2026-09-18)** : il **ingère les deux phases** (dénombrement et
-> VAD) et voit **les deux tableaux de bord**, bornés à son district ; la garde qui
-> l'enfermait dans `/transcription` a été retirée.
-> **VISITE À DOMICILE — EN SERVICE (maj 2026-09-18)** : la VAD a désormais ses tables
-> (`vad_menage`, `vad_membre`, `vad_diagnostics` — module `vad_db.py`), son **ingestion
-> par l'Expert survey** (`/transcription/vad` : téléversement du dossier d'export
-> RSUe, aperçu, puis transcription UPSERT) et son **tableau de bord complet**
-> (`/vad/<section>`, modules `vad_core.py` + `vad_web.py`) en 8 sections — Vue globale,
-> Démographie (pyramide des âges, masculinité, dépendance), Habitation, Biens & actifs,
-> Eau & assainissement, Carte GPS, Listing d'erreurs, Par agent — ouvert aux
-> **Coordonnateurs National et Régional, au Traitement et au Superviseur Technique**,
-> chacun borné à son périmètre. Voir la section datée pour CE QUI RESTE À FAIRE.
-> **« VISITE À DOMICILE » À CÔTÉ DU DÉNOMBREMENT — ACTIVÉ (maj 2026-09-19)** : sur la
-> **fenêtre de sélection** (choix du district + type de suivi), la vignette **Visite à
-> domicile** ouvre désormais le **VRAI tableau de bord VAD** (`/vad/general`) **borné au
-> district choisi**, et non plus l'écran « pas encore disponible » (`page_vad_indisponible`
-> **supprimée**). Ouvert à **TOUS les rôles qui atteignent cette fenêtre** : `_ROLES_VAD`
-> gagne les **Comités Techniques** et l'**Admin** (correctif 2026-09-19, cf. ci-dessous)
-> — donc tout le monde sauf les deux **Responsables Logistiques**, seuls à ne pas avoir
-> de tableau de bord (ils sont renvoyés vers `/logistique` avant même `/choix`).
-> **COEFFICIENT DE VARIATION (maj 2026-09-17)** : la taille des ménages est désormais
-> décrite par **moyenne, écart-type ET coefficient de variation** (σ ÷ moyenne, en %) —
-> dans le KPI de la vue générale, sur la page Qualité, et en colonne des tableaux 2 et 3 de
-> la feuille « Rapport global » de l'export Excel.
-> **MANUELS (maj 2026-09-17)** : les guides par poste (`/manuel`) sont à jour de tout ce
-> qui précède, et gagnent une section **Journal de bord** pour TOUS les postes (écriture ou
-> lecture selon le rôle) ainsi qu'une section **Déclaration des agents** pour le Superviseur
-> Technique. Les groupes de rôles du journal vivent désormais dans `utilisateurs.py`
-> (`ROLES_JOURNAL_ECRITURE` / `ROLES_JOURNAL_LECTURE` / `ROLES_DECLARATION`), partagés par
-> `serveur_app` et `manuel_roles`.
-> **JOURNAL — PIÈCES JOINTES (maj 2026-09-17)** : sur `/journal/modifier`, on peut
-> désormais **retirer** des photos/fichiers (une case « Retirer » par pièce, avec vignette)
-> et en **ajouter** d'autres, le tout appliqué en **une seule validation** avec le texte.
-> Auparavant un `<form>` imbriqué faisait supprimer par le navigateur le formulaire de
-> suppression ET sortait les champs d'ajout du formulaire principal : ni l'un ni l'autre ne
-> fonctionnait depuis un navigateur.
-> **PRÉCHARGEMENT (maj 2026-09-17)** : sur `/traitement/prechargement`, la règle
-> d'acceptation d'un préchargement déjà généré est désormais **explicite** — un classeur est
-> valide dès qu'**une** de ses feuilles porte la colonne `interview_keyden` ; `e_fokontany`
-> peut être vide ou absente, un fichier réduit à `nouveau` est juste. Les fichiers
-> réellement inexploitables sont refusés **en disant lequel et pourquoi**.
-> **DÉCLARATIONS DES AGENTS (maj 2026-09-17)** : nouvelle table `declaration_agent`
-> (`code_agent` → FK `agent`, `date`, `type_operation` ∈ {DEN, VAD}, `nombre`) et nouveau
-> module `declarations.py`. Le **Superviseur Technique** a, dans son menu (`/suptech`), un
-> choix « Déclaration des nombres de ménages dénombrés / interviewés par les Agents »
-> (`/declaration`) → sous-choix **Dénombrement** ou **VAD** → téléversement d'un **classeur
-> Excel** bâti sur le **modèle** fourni (colonne 1 = code agent, colonnes 2..n = dates) →
-> transcription (UPSERT) vers la base. L'export Excel confronte ensuite, par chef d'équipe
-> et par date, ce que l'agent **déclare** et ce qui **arrive au serveur**.
-> **COLLABORATION (maj 2026-08-31)** : au-delà du dashboard, l'app porte désormais une
-> couche de **suivi d'équipe** (voir la section datée 2026-08-31) — **Journal de bord**
-> (`journal.py`, `/journal` : l'équipe technique écrit ses activités du jour avec rappel
-> par bulle, entrées modifiables par leur auteur (cree_le figé + modifie_le), historique
-> complet ; les coordonnateurs LISENT, filtres district/fonction/
-> axe/nom/date ; **SUIVI de complétude** `/journal/suivi` = qui a écrit ou non chaque
-> jour de mission, par poste/district/axe, le National choisissant son district),
-> **Consignes / instructions** (`consignes.py`, `/consignes` : les deux
-> coordonnateurs envoient des consignes ciblées par rôles+districts, reçues via une bulle,
-> modifiables/supprimables par l'auteur ; lecture filtrable), et **« Mon profil »**
-> (`/profil`, tous rôles : chacun édite ses CIN/téléphone/N° Orange Float/e-mail/**sexe**,
-> le reste réservé à l'Admin). Restent surtout :
-> câbler l'allègement des **autres sections** (§6 étape 3), le **suivi VAD** et les
-> **outils transactionnels logistiques** quand leurs données existeront, **changer le
-> compte d'amorçage**, **PostgreSQL** effectif (`RSU_DB_URL`), **FastAPI**, **HTTPS**,
-> **hébergement** — étape par étape, voir §6 « Feuille de route ».
+> **État au 2026-09-28 — EN LIGNE sur le VPS `5.135.244.23`** ✅
+> **http://5.135.244.23/rsu-web/**
+>
+> ⚠️ **Changement de serveur (27/09).** L'application tournait sur
+> `rse.instat.mg` ; cette adresse répond **HTTP 503**. RSU-web a été redéployé
+> sur le VPS qui héberge déjà CSWeb et l'application de suivi STIB. Tout le
+> § « Déploiement en ligne (journal 2026-08-28) » décrit l'**ancien** serveur.
+>
+> | | |
+> |---|---|
+> | Dossier | `/home/debian/rsu-web` |
+> | Exécution | `venv/bin/python serveur_app.py` — **pré-fork, 1 processus par cœur** |
+> | Port | 8000, `ThreadingTCPServer`, file d'attente **128** |
+> | Service | systemd `rsu-web`, *enabled*, `Restart=always`, `PYTHONUNBUFFERED=1` |
+> | Base | SQLite `rsu_local.sqlite` en **WAL**, pool de **8 connexions par processus** |
+> | Voisins | CSWeb (PHP) et **STIB** (`/suiviSTIB/`, gunicorn sur 8010) |
+> | Machine | 2 vCPU, **3,9 Go RAM, aucun swap** — partagés entre les trois applications |
+> | Capacité mesurée | **100 requêtes simultanées, 0 échec, 21 ms au pire** (page authentifiée) |
+>
+> **Le socle**, inchangé depuis le 17/08 : **login** en base avec mots de passe
+> hachés (PBKDF2), **9 rôles** via la table `responsabilite`, **affectation**
+> district(s)/communes par clés étrangères **respectée au routage**
+> (`perimetre(u)`, `_perimetre_vue`), page de **sélection** Province/Région/
+> District, et un **dashboard multi-pages** — une page HTML par section, allégée
+> par des **agrégats calculés côté serveur** (Vue générale : 24 Mo → 265 Ko).
+> Chaque rôle atterrit sur SA page : Admin → `/admin`, Expert survey →
+> `/transcription`, Traitement → `/traitement`, Logistique → `/logistique`,
+> Coordonnateurs → `/coordonat` et `/coordoreg`, Superviseur Technique →
+> `/suptech`.
+>
+> **Acquis antérieurs** (détail dans les entrées datées) : la **Visite à
+> domicile (VAD)** — tableau de bord, carte GPS avec descente District →
+> Commune → Fokontany, **47 tests de qualité** audités, export dédié ; la **base
+> de préchargement** ; la **couverture par agent** ; le **rapport de mission
+> individuel** ; les **consignes** ; la **suppression des données d'un
+> district** ; les **journaux d'ingestion** ; le référentiel `zones` sur
+> 31 districts.
+>
+> **Le 27/09** : `agent` et `chef_equipe` reçoivent un **district**
+> (`district_ae` / `district_ce`, clés étrangères), rempli depuis le code de
+> zone du login. Page **`/equipes`** (`equipes_liste.py`) pour consulter,
+> filtrer, corriger, supprimer et **ajouter** des CE/AE, bornée au district de
+> chacun. Accès direct au tableau de bord pour les rôles à district unique.
+> District posé **automatiquement au téléversement**, depuis l'affectation de
+> celui qui téléverse — jamais substitué à un district déjà enregistré.
+>
+> **Le 28/09 — journée « capacité et VAD »** :
+>
+> | Nouveau | |
+> |---|---|
+> | `vad_listing.py` | portage du **do-file Stata** de listing des erreurs VAD : 4 classeurs en ZIP, contenu selon le rôle, bouton « Rapport Excel » |
+> | `sessions.py` | sessions **en base** — plusieurs processus possibles, et un redémarrage ne déconnecte plus personne |
+> | `cache_version.py` | compteur partagé qui **périme les caches de tous les processus** |
+> | pré-fork | N processus, parent superviseur qui **remplace un travailleur mort** |
+> | pool de connexions | `db_source` : **1,458 ms → 0,014 ms** par accès |
+> | `requirements.txt` | numpy/pandas/pyreadstat **épinglés**, avec la raison écrite |
+>
+> **Gains mesurés dans la journée** : 30 requêtes simultanées passent de
+> **1 029 ms au pire / 28 req/s** à **8 ms / 1 264 req/s** ; les agrégats VAD de
+> 252 ms à 0 ms ; les cœurs utilisables de **1** à **tous**.
+>
+> **Reste à faire**, par ordre d'importance :
+>
+> 1. **HTTPS** — le VPS est en HTTP simple. Bloquant avant toute diffusion.
+> 2. **Migration vers le serveur INSTAT** (15 cœurs, 15 Go) : y mettre
+>    **`RSU_PROCESSUS=15`** dans l'unité systemd. C'est là que le travail du
+>    28/09 prend sa valeur — avant lui, 15 cœurs n'auraient rien apporté.
+> 3. **Aucun swap** sur cette machine : un pic mémoire tue un processus. Le
+>    parent le remplace désormais, mais la cause demeure.
+> 4. **Changer le compte d'amorçage**.
+> 5. **PostgreSQL** effectif (`RSU_DB_URL`) — le code le prévoit déjà.
+> 6. **`synchroniser_agents()` crée des agents sans district ni chef d'équipe**
+>    (fiches dont le nom est le code). Déduire le district du code de zone du
+>    login **à la création** éviterait de les nettoyer après coup.
+> 7. **Resynchroniser les fichiers partagés** avec le projet `.exe` (gabarits,
+>    `rapport_core.py`, `assets/`) — en attente depuis longtemps.
+
+## 0 bis. Leçons chèrement acquises — à lire avant de toucher au code
+
+Ces règles ont chacune coûté un incident réel. Elles sont ici, en tête, parce
+qu'une leçon enterrée au milieu de 6 800 lignes ne sert personne.
+
+> Celles qui suivent datent du **2026-09-28**. Le catalogue des pièges
+> antérieurs — arrondi JS/Python, clés étrangères SQLite, `SystemExit` dans une
+> requête, sécurité navigateur… — est au **§9.3**, et reste valable.
+
+**1. Un garde ou un test doit porter sur ce que SEULE la correction introduit.**
+Deux incidents le même jour. Un script posait une route puis la méthode qui la
+sert, chaque étape gardée par `if "_vad_listing_get" not in s` — mais
+l'insertion de la **route** venait d'introduire cette chaîne : la méthode n'a
+jamais été écrite, et le contrôle final, qui cherchait la même chaîne, affichait
+« True ». Résultat : **502 en production**. Le même soir, un garde cherchant
+`est_sqlite` a trouvé un **nom de variable** existant et sauté une correction
+qui commandait une sauvegarde de base. Le bon marqueur est
+`def _vad_listing_get`, `from db_source import est_sqlite` — jamais un mot qui
+peut exister pour une autre raison.
+
+**2. Tester une route SANS session ne teste que l'authentification.**
+`curl /vad/listing.zip` → 303 vers `/login` : j'en ai conclu « la route
+marche ». Le 303 venait d'un garde d'authentification placé **avant** la route ;
+le code derrière n'était jamais atteint. Pour éprouver un gestionnaire, il faut
+l'**exécuter** — au besoin avec un objet qui fournit ses collaborateurs.
+`hasattr()` ne remplace pas un appel.
+
+**3. Mesurer une connexion SQLite exige une VRAIE lecture de table.**
+`sqlite3.connect()` est **paresseux** : 0,046 ms tant qu'on ne lit rien, 1,458 ms
+dès la première lecture (ouverture du fichier + schéma des 45 tables). J'ai
+d'abord accusé un `PRAGMA journal_mode` de ce coût, et « corrigé » sans effet.
+Mesurer `connect()` seul fait conclure qu'il n'y a rien à gagner.
+
+**4. Sur une base vivante, une assertion sur un nombre absolu ne teste que
+l'heure qu'il était.** Des tests écrits avec `== 127` ont produit quatre faux
+échecs dès que l'utilisateur a téléversé. Les assertions doivent être
+**relatives** : somme des parties = total, district conforme à ce que la base
+contient à cet instant.
+
+**5. Avant de supprimer, vérifier les références ET l'état du moment.**
+Supprimer 613 agents sans district était sans risque **ce soir-là** parce que
+les tables de collecte étaient vides. La veille, ces mêmes fiches étaient les
+enquêteurs des interviews en base : la suppression aurait laissé des références
+orphelines et rompu le lien interview → agent. La même commande, deux jours
+différents, deux conséquences opposées.
+
+**6. Les valeurs manquantes de Stata sont PLUS GRANDES que tout nombre.**
+`M4>5` est VRAI quand l'âge est manquant. Un portage naïf du do-file VAD aurait
+signalé tous les âges vides sur un contrôle, et en aurait raté sur un autre
+(`M4<12`, faux sur un manquant, ce dont le do-file dépend).
+
+**7. Écrire un script depuis Windows : passer par un fichier, pas par un
+heredoc.** Apostrophes et guillemets triples imbriqués cassent le heredoc de
+façon illisible. Écrire le fichier localement puis `scp` — et convertir CRLF en
+LF, sinon `bash` bute sur `$'\r'`.
+
+**8. Une ancre de patch se relève sur les octets du fichier, pas de mémoire.**
+Indentation (12 espaces et non 16) et accents (`agregats` et non `agrégats`) ont
+chacun fait échouer un patch. `cat -A` montre la vérité ; un script qui échoue
+**avant d'écrire** vaut mieux qu'un fichier à moitié modifié.
 
 ## 1. Deux projets bien séparés (RÈGLE IMPORTANTE)
 
@@ -976,6 +969,11 @@ et les gros dossiers `DATA/`, `Cartographie/`, `LimitesFokontany/`. Ils appartie
 - **Préfixe d'URL `/rsu`** partout (de-préfixage en entrée, préfixage en sortie).
 
 ### 9.2 Reste à faire (par priorité)
+
+> ⚠️ **Liste arrêtée au 2026-09-19.** Le « reste à faire » qui fait foi est
+> celui du **bloc d'état en tête de document** (2026-09-28). Les points
+> ci-dessous restent utiles pour le détail technique ; les mentions ✅ signalent
+> ce qui a été réglé depuis.
 0. ~~**FAIRE RESPECTER l'affectation**~~ **FAIT (2026-08-14)** : `perimetre(u)` +
    `Handler._perimetre_vue`/`_zone_autorisee` bornent `/vue`, `/menu`, `/fokontany` au
    périmètre du rôle. Traitement = son district entier. Superviseur = ses communes :
@@ -1003,6 +1001,10 @@ et les gros dossiers `DATA/`, `Cartographie/`, `LimitesFokontany/`. Ils appartie
    déjà le guide + la navigation ; remplacer les blocs « en cours de conception ».
 6. **FastAPI/uvicorn** (étape 5), **HTTPS** (étape 6), **hébergement VPS/INSTAT**
    (étape 7). Tant que pas derrière HTTPS : **usage local uniquement**.
+   ✅ **Hébergement VPS fait** (27/09, `5.135.244.23`). ❌ **HTTPS toujours
+   absent** — c'est le point n°1 du bloc d'état. FastAPI n'est plus nécessaire
+   à la montée en charge : le **pré-fork** du 28/09 donne les N processus sans
+   réécrire la couche HTTP (§ journal « PLUSIEURS PROCESSUS »).
 7. Durcissement : **CSRF**, politique de mots de passe, éventuellement cookie de
    session expirant à la fermeture du navigateur.
 8. ⚠️ **Resynchro exe** : `template_head.html`, `template_tail.html`, `rapport_core.py`
@@ -1017,6 +1019,11 @@ et les gros dossiers `DATA/`, `Cartographie/`, `LimitesFokontany/`. Ils appartie
    inertes côté exe. `export_rapport.py` est **web-only** (pas de copie exe).
 
 ### 9.3 Leçons apprises (pièges rencontrés — à ne pas réapprendre)
+
+> Catalogue **historique**, arrêté au 2026-09-19. Les leçons de la journée
+> « capacité et VAD » du **2026-09-28** — gardes de patch, mesure d'une
+> connexion SQLite, tests sur base vivante, valeurs manquantes de Stata — sont
+> au **§0 bis**, en tête de document.
 - **`Math.round` (JS) ≠ `round()` (Python)** : JS arrondit .5 vers le haut, Python fait
   un arrondi bancaire. Pour tout agrégat prouvé identique au gabarit : `rapport_core._js_round`.
 - **SQLite ne vérifie PAS les clés étrangères** sauf `PRAGMA foreign_keys=ON` (off par
@@ -5628,3 +5635,1248 @@ La couverture du tableau de bord VAD (`vad_core._couverture`) prenait déjà le 
 Même format pour le dénombrement (demande utilisateur) : `export_rapport.nom_fichier(code)`
 → **`Rapport_DEN_<code district>_<AAAAMMJJ>_<HHMM>.xlsx`** (remplace
 `Rapport_RSU2026_<nom du district>.xlsx`, route `/export/rapport.xlsx`).
+
+## Déploiement sur le VPS 5.135.244.23 (journal 2026-09-27)
+
+RSU-web a **changé de serveur**. Il tournait sur `rse.instat.mg`, qui répond
+aujourd'hui **HTTP 503** (vérifié le 27/09) ; il est désormais déployé sur le
+VPS `5.135.244.23`, la machine qui héberge déjà CSWeb et l'application de suivi
+STIB.
+
+> Le § « **Déploiement en ligne (journal 2026-08-28)** » décrit l'**ancien**
+> montage. Il reste utile comme référence de méthode — reverse-proxy, service
+> systemd, installateur avec test de syntaxe avant rechargement — mais ce n'est
+> plus celui qui tourne. Sauvegarde du document avant cette mise à jour :
+> `CLAUDE.md.avant-20260927`.
+
+### Ce qui a été relevé
+
+| Élément | Valeur |
+|---|---|
+| Dossier | `/home/debian/rsu-web` — 8,3 Go |
+| Service systemd | `rsu-web`, *active* + *enabled*, `Restart=always`, `RestartSec=3` |
+| Exécution | `venv/bin/python serveur_app.py` — **pas gunicorn**, un seul processus |
+| Port | **8000**, `socketserver.ThreadingTCPServer` |
+| Conf Apache | `/etc/apache2/conf-available/rsu-web.conf` (activée par `a2enconf`) |
+| URL | `http://5.135.244.23/rsu-web/` |
+| Installé le | **27/09/2026** — service 05:29 UTC, conf Apache 05:44 UTC |
+
+La configuration ajoute `RedirectMatch ^/$ /rsu-web/` : **la racine du serveur
+redirige vers RSU-web**. Elle répondait 403 auparavant.
+
+### Voisinage — trois applications sur une machine
+
+Elles cohabitent sans conflit (ports et préfixes distincts,
+vérifiés en réponse HTTP) : **CSWeb** (PHP), **RSU-web** (8000) et **STIB**
+(`/suiviSTIB/`, gunicorn sur 8010). Le vhost `csweb.conf` n'est modifié par
+aucune des deux ajoutées.
+
+### ⚠️ Deux points à connaître sur CETTE machine
+
+**1. NumPy ≥ 2 ne peut pas y tourner.** Le processeur est un « Common KVM
+processor » qui n'expose pas le jeu d'instructions **x86-64-v2**. NumPy 2.x y
+est compilé avec ce niveau en base et lève **dès l'import** :
+
+    NumPy was built with baseline optimizations (X86_V2)
+    but your machine doesn't support (X86_V2)
+
+Le venv de RSU-web contient **`numpy 1.26.4`**, qui fonctionne (vérifié par
+import réel). **Ne pas faire `pip install -U numpy`** : cela rendrait tout
+import de numpy impossible, sans message compréhensible côté application.
+Épingler la version dans le fichier de dépendances est la seule protection
+durable.
+
+**2. `Restart=always` rattrape un plantage, pas un blocage.** RSU-web tourne en
+un seul processus sans arbitre : si le processus **sort**, systemd le relance en
+3 s ; s'il se **fige** (interblocage, requête qui ne rend jamais la main),
+systemd le voit toujours « actif » et n'intervient pas. L'application reste
+alors injoignable jusqu'à un redémarrage manuel.
+
+STIB n'a pas ce défaut (gunicorn tue un worker muet). Deux remèdes possibles
+pour RSU-web : une surveillance externe (`cron` qui teste la page et relance le
+service), ou un passage sous gunicorn.
+
+### Mesures du 27/09/2026
+
+- Service actif depuis 05:29 UTC, **0 redémarrage**, **0 erreur** au journal.
+- `/rsu-web/login` → **HTTP 200**.
+- Concurrence : **8 requêtes simultanées en 7 ms** (pire cas 3 ms).
+- Empreinte mémoire : ~143 Mo.
+- Machine : 2 vCPU, 3,9 Go RAM, ~3,1 Go libres, charge 0,12.
+
+## DISTRICT des CE et des AGENTS + page de gestion (journal 2026-09-27)
+
+### Le problème
+
+`agent` et `chef_equipe` **n'avaient aucune colonne district**. Impossible de
+répondre à « combien de CE et d'AE dans tel district ? » autrement qu'en passant
+par le dénombrement — donc impossible pour un agent qui n'a pas encore travaillé.
+
+### La solution retenue
+
+Deux colonnes, **clés étrangères** vers `district(code_district)** : :
+
+    agent.district_ae        BIGINT REFERENCES district(code_district)
+    chef_equipe.district_ce  BIGINT REFERENCES district(code_district)
+
+Elles restent **NULL** par défaut — SQLite l'exige pour un `ALTER TABLE` portant
+une `REFERENCES`, et c'est de toute façon ce qu'on veut : **un district faux se
+propagerait silencieusement dans tous les comptages, un district vide se voit**.
+
+**Le modèle Excel de téléversement ne change pas.**
+
+### Comment les valeurs ont été déduites
+
+Le login porte un **code de zone** : `EQ1_MDTR_0002` → `MDTR`. Avant d'écrire
+quoi que ce soit, trois vérifications :
+
+| Vérification | Résultat |
+|---|---|
+| Un agent travaille-t-il sur plusieurs districts ? | **Aucun** sur 6 504 |
+| Une zone pointe-t-elle sur plusieurs districts ? | **Aucune** sur 17 |
+| Un CE mélange-t-il des agents de zones différentes ? | 2 cas, **simples différences de casse** (`BELO`/`bELO`) |
+
+D'où : comparaison de zone **insensible à la casse**, et remplissage à partir du
+**dénombrement réalisé** — la seule source sans ambiguïté.
+
+**Résultat : 8 930 agents et 324 chefs d'équipe renseignés**, 0 code orphelin.
+
+### Ce qui reste à NULL, et pourquoi
+
+11 zones n'apparaissent dans aucun dénombrement : `ATLH`, `BELO`, `BIRA1`,
+`FDFGN`, `IHSY`, `IKMV`, `MDVZ`, `MPKN`, `SNRVG`, `TANN`, `TRIMO`. L'utilisateur
+a indiqué qu'il s'agit de **données de test** qu'il compte supprimer — elles sont
+donc laissées en l'état plutôt que rattachées au jugé.
+
+Deux confirmations données au passage, à appliquer si ces données sont conservées :
+**BELO → 6401 Belo sur Tsiribihina**, **BIRA1 → 1403 Antsirabe I**.
+
+À noter : `INSD` et `ISND` désignent tous deux Isandra (3304) — inversion de
+lettres à la saisie ; `TRIM` désigne Ambohidratrimo (1101).
+
+### ⚠️ Anomalie PRÉEXISTANTE relevée (pas causée par cette migration)
+
+`PRAGMA foreign_key_check` remonte des manquements :
+
+    vad_menage            2375
+    superviseur_commune   1054
+    den_menage             888
+    responsable_district    47
+    limite_fokontany        18
+
+**Chiffres identiques avant et après**, contrôlés sur la sauvegarde : ils
+préexistaient. Les deux nouvelles colonnes, elles, ont **0 orphelin**. Ce point
+mérite un examen séparé.
+
+Sauvegarde : `rsu_local.sqlite.avant-district-20260927-143549` (1,1 Go, prise par
+`.backup` **sans arrêter l'application**, en 5 s).
+
+---
+
+### Nouvelle page `/equipes` — consulter, corriger, supprimer
+
+Module **`equipes_liste.py`**. Ouverte à **Admin**, **Traitement** et
+**Expert survey** (lien « Équipes » dans la barre d'administration ; carte
+« Chefs d'équipe et agents » dans l'espace Traitement).
+
+Deux onglets :
+
+| Onglet | Colonnes |
+|---|---|
+| Chefs d'équipe | login, nom et prénom, district, nombre d'agents |
+| Agents | login, nom et prénom, **login du CE** (+ son nom), district |
+
+Filtres : district, recherche libre (login ou nom), et pour les agents un filtre
+par chef d'équipe. Modification et suppression sur chaque ligne.
+
+**Trois décisions qui tiennent la sécurité et l'intégrité :**
+
+1. **Le périmètre est appliqué dans le module, pas dans l'écran.** Chaque lecture
+   ET chaque écriture repasse par `_districts_autorises()`. Vérifié par test : un
+   Traitement qui forge un POST sur une fiche d'un autre district est **refusé**,
+   et il ne peut pas non plus **déplacer** une fiche hors de son périmètre — ce
+   serait un moyen détourné de la faire disparaître de sa vue. Masquer un bouton
+   n'a jamais protégé une donnée.
+2. **Supprimer un CE qui a encore des agents est refusé**, sauf à cocher
+   « détacher les agents » (leur `login_ce` passe alors à NULL). Sans cela on
+   laisserait des agents pointant vers un chef disparu.
+3. **Les fiches sans district ne sont visibles que de l'Admin**, via un filtre
+   dédié — un Traitement ne les voit pas, puisqu'elles ne sont pas dans son
+   district. C'est par là qu'on les corrige.
+
+**Pagination — 100 lignes par page.** Sans elle, la liste des 12 815 agents
+produisait une page de **6,6 Mo** : inutilisable depuis Madagascar, où s'ajoutent
+400 ms de latence. Ramenée à **58 Ko**, soit 110 fois moins. La navigation
+conserve les filtres. C'est le principe déjà appliqué au dashboard (24 Mo →
+265 Ko), rappelé ici parce qu'il se reperd facilement.
+
+**22 tests** passent (accès par rôle, périmètre en lecture, refus d'écriture hors
+périmètre, refus de suppression d'un CE peuplé, rendu des pages et des
+formulaires). Sauvegardes : `serveur_app.py.avant-equipes`,
+`admin.py.avant-equipes`, `equipes.py.avant-equipes`,
+`equipes_liste.py.avant-pagination`.
+
+### Reste à faire
+
+**Le remplissage automatique du district au téléversement** : quand un
+responsable Traitement transcrit les Excel CE/Agents, son district d'affectation
+est connu — `equipes.transcrire()` doit le poser sur les fiches créées. Non
+encore câblé.
+
+### Ajout manuel d'un CE ou d'un agent (journal 2026-09-27)
+
+Le **téléversement Excel reste inchangé** : ce qui suit s'ajoute, pour les
+créations ponctuelles et les corrections.
+
+Bouton « **+ Ajouter un chef d'équipe / un agent** » sur `/equipes`, menant à
+`/equipes/ce/ajouter` et `/equipes/ae/ajouter`. Mêmes trois rôles : Admin,
+Traitement, Expert survey.
+
+**Le district est OBLIGATOIRE à la création** — contrairement à la modification,
+où laisser le champ vide conserve la valeur existante. Raison : une fiche créée
+sans district serait **invisible de son propre auteur** dès la page rechargée,
+puisqu'un Traitement ne voit que son district. Autant refuser tout de suite.
+
+**Le login n'est pas contraint à la convention** `PRÉFIXE_ZONE_NUMÉRO`
+(`CE_MDTR_001`, `EQ1_MDTR_0002`) : une équipe peut avoir ses propres codes, et
+refuser une saisie légitime serait pire qu'un login atypique. La convention est
+**rappelée à l'écran** avec un exemple, parce que c'est d'elle que se déduit le
+district des fiches anciennes.
+
+**En cas d'erreur, le formulaire revient avec les valeurs saisies.** Refaire
+toute la saisie parce qu'un login était déjà pris est inutilement pénible.
+
+Contrôles, tous vérifiés par test : login de 3 à 40 caractères sans espace,
+login unique, nom d'au moins 3 caractères, district existant **et dans le
+périmètre**, chef d'équipe rattaché existant et **dans le périmètre** lui aussi.
+
+**16 tests** passent, dont 7 refus attendus. Les fiches créées pour l'essai ont
+été supprimées : la base ne contient aucune trace de `TEST_TMP`.
+
+Sauvegardes : `equipes_liste.py.avant-ajout`, `serveur_app.py.avant-ajout`.
+
+### Accès DIRECT au tableau de bord pour les rôles à district unique (journal 2026-09-27)
+
+Demande : pour **Traitement**, **Expert survey** et **Superviseur Technique**, ne
+plus passer par le choix du district ni par le choix Dénombrement/VAD — leur
+district est connu, on ouvre le tableau de bord tout de suite.
+
+**Le Superviseur Technique le faisait déjà** (`_menu_operation_get` : district
+fixe → sélection préparée → `/suivi`). Le travail a donc consisté à **étendre ce
+comportement** aux deux autres, sans le réécrire.
+
+**Ce qui a été fait :**
+
+1. Le bloc qui prépare la sélection dans `_menu_operation_get` est extrait en
+   méthode **`_selection_district_unique(sess, districts_perim, suivi)`**. Une
+   seule implémentation pour les trois rôles ; deux copies auraient divergé.
+2. **`/choix`** détecte un rôle à district unique (`perimetre()` rend exactement
+   un district) et **court-circuite l'écran de sélection** : il prépare la
+   sélection et redirige vers `/suivi`.
+3. Le district vient de **`perimetre()`, jamais d'une saisie** — même source de
+   vérité que la validation du POST de sélection. Un rôle multi-district
+   (Coordonnateurs, Comités Techniques) **garde** l'écran de choix, vérifié :
+   `perimetre()` leur rend `None`.
+4. Le type de suivi par défaut est le **dénombrement**. `?op=vad` reste accepté
+   sur `/choix` : le tableau de bord VAD est atteignable sans repasser par
+   l'écran, si l'on veut lui ajouter une carte de menu plus tard.
+5. Libellé de la carte Traitement aligné sur celui de l'Expert survey :
+   « Tableau de bord — Dénombrement » au lieu de « Tableau de bord (suivi) ».
+   Une carte doit dire quel tableau de bord elle ouvre, maintenant qu'elle
+   l'ouvre sans étape intermédiaire.
+
+Vérifié : `perimetre()` rend bien **un seul district** pour les trois rôles
+(4406, 5206, 1101 dans le test) et `None` pour un Coordonnateur. Service
+redémarré sans erreur, 0 redémarrage intempestif.
+
+Sauvegardes : `serveur_app.py.avant-direct`, `equipes.py.avant-libelle`.
+
+⚠️ **À confirmer par un essai réel** : n'ayant pas de compte pour me connecter,
+je n'ai pu vérifier que la logique et la précondition, pas le parcours complet
+depuis le navigateur.
+
+### District posé AUTOMATIQUEMENT au téléversement (journal 2026-09-27)
+
+Dernier morceau de la demande du 27/09. **Le modèle Excel ne change pas** : le
+district n'est pas dans le fichier, il vient de l'**affectation du responsable
+Traitement qui téléverse**. C'est une information qu'on possède déjà, inutile de
+la redemander.
+
+`equipes.transcrire(conn, chef_xlsx, agent_xlsx, district=None)` — le paramètre
+est **facultatif**, donc l'ancien comportement reste intact si on ne le passe pas
+(vérifié par test). `serveur_app._traitement_equipes_post` le renseigne depuis
+`u["district_affectation"]`, qu'il lisait déjà pour l'affichage.
+
+**La règle d'écriture, volontairement prudente :**
+
+| Situation | Effet |
+|---|---|
+| Fiche **créée** | district posé |
+| Fiche existante **sans** district | district posé — c'est la correction voulue |
+| Fiche existante avec un **AUTRE** district | **rien n'est touché**, et c'est **signalé** |
+
+Le troisième cas est le plus important. Un téléversement ne doit pas **déplacer
+silencieusement une équipe d'un district à un autre** : ce serait la faire
+disparaître de la vue de son responsable légitime, sans que personne ne s'en
+aperçoive. Le district enregistré est donc conservé, et l'écran affiche un
+avertissement nommant les fiches concernées.
+
+`_upsert_chef` et `_upsert_agent` renvoient désormais `(état, district_posé,
+conflit)` au lieu d'une simple chaîne — un seul appelant, `transcrire`, adapté en
+conséquence. Le bilan gagne `districts_poses` et `conflits`.
+
+**Le bilan le dit à l'écran** : « District « MANDRITSARA » renseigné sur N
+fiche(s) », et le cas échéant l'avertissement sur les conflits. Sans cela,
+personne ne saurait que cette colonne s'est remplie toute seule.
+
+**18 tests** passent, sur de vrais fichiers `.xlsx` fabriqués pour l'essai :
+fiches neuves, second passage sans effet, téléversement depuis un autre district
+(conflit signalé, district conservé), fiche au district vide complétée, et appel
+sans district (compatibilité). Les fiches d'essai ont été supprimées — aucune
+trace de `ZZTEST` dans la base.
+
+Sauvegardes : `equipes.py.avant-district-auto`, `serveur_app.py.avant-district-auto`,
+`serveur_app.py.avant-bilan`.
+
+### 2026-09-27 — FIN DE LA PÉRIODE DE TEST : vidage des données de collecte
+
+Demande de l'utilisateur : « le temps du test est terminé. Vider les tables
+agent, chef_equipe. Les données de dénombrement ainsi que le dossier qui
+contient les `*.dta`, de même pour le VAD aussi. »
+
+**218 390 lignes supprimées**, 396 fichiers `.dta` effacés, base ramenée de
+1 120 à 1 033 Mo après `VACUUM`.
+
+| Opération | Tables vidées | Lignes |
+|---|---|---|
+| **Dénombrement** | `segment_roster` | 82 961 |
+| | `interview__diagnostics` | 14 051 |
+| | `den_menage` | 14 036 |
+| | `prechargement_ensemble` | 19 556 |
+| | `prechargement_nouveau` | 19 556 |
+| | `prechargement_lot` | 9 |
+| **Visite à domicile** | `vad_membre` | 30 479 |
+| | `vad_diagnostics` | 12 056 |
+| | `vad_menage` | 12 056 |
+| **Équipes** | `agent` | 12 815 |
+| | `chef_equipe` | 815 |
+
+**La liste des tables vient de `suppression.OPERATIONS`**, pas d'une liste écrite
+à la main. C'est le point à retenir : le jour où une table s'ajoute à une
+opération, elle sera vidée aussi — une liste recopiée aurait divergé en silence.
+
+**L'ordre est imposé par les clés étrangères**, relevées dans le schéma avant
+d'écrire quoi que ce soit :
+
+    interview__diagnostics, vad_diagnostics, declaration_agent  ->  agent
+    agent                                                       ->  chef_equipe
+
+Les diagnostics partent donc **avant** `agent`, et `agent` **avant**
+`chef_equipe`. `PRAGMA foreign_keys` vaut 0 par défaut ici, mais l'ordre est
+respecté quand même : le jour où les contraintes seront actives, la procédure
+tiendra encore.
+
+**Les comparatifs RGPH ↔ RSU ont été VIDÉS, pas supprimés** — même règle que
+`suppression.py` : `comp_taille_menage` (volet RSU remis à NULL sur 30 lignes)
+et `comp_pyramide` gardent leurs 1 824 et 4 080 lignes. Leurs colonnes `*_rgph`
+sont le recensement 2018, pas notre collecte : les effacer aurait détruit une
+référence qu'aucun téléversement ne reconstruit.
+
+**Ce qui n'a pas été touché**, vérifié compte par compte après le vidage :
+référentiel (6 provinces, 23 régions, 120 districts, 1 717 communes,
+22 190 fokontany), **403 comptes** et leurs affectations
+(`superviseur_commune` 1 054, `responsable_district` 47), les 10 consignes, le
+RGPH (608 235 ménages, 2 568 303 individus), `_schema` et `_value_labels`
+(la structure : les effacer aurait rendu les prochains `.dta` illisibles).
+
+**Dossiers de `.dta` supprimés** — 0 fichier `.dta` restant dans tout le projet :
+
+| Dossier | Contenu | Sort |
+|---|---|---|
+| `DATA_serveur/<district>/` | 18 districts, dénombrement | vidé |
+| `DATA_serveur/VAD/<district>/` | 14 districts, VAD | vidé |
+| `Rapport_Fichier/<district>/` | 7 districts, pièces jointes de rapport | vidé |
+| `rsuefkt_25_rN_pil_1_STATA_All_20260912T1036Z/` | extraction laissée à la racine le 12/09 | supprimé |
+
+⚠️ **`DATA_serveur/`, `DATA_serveur/VAD/` et `Rapport_Fichier/` sont conservés
+vides** : ce sont `UPLOAD_DIR` et `RAPPORT_FICHIER_DIR`. Supprimer le répertoire
+lui-même aurait cassé le prochain téléversement — vider n'est pas démolir.
+
+**Vérification faite avant de supprimer l'extraction résiduelle** : `rsuefkt`
+apparaît dans 4 modules (`vad_db.NOMS_MENAGE`, aides de `vad_web`,
+`manuel_roles`, `serveur_app`). Ce sont des références au **nom de fichier**
+`rsuefkt_…_pil.dta` attendu à l'ingestion, **pas** au dossier d'extraction.
+Le dossier était bien un résidu.
+
+**Sauvegardes conservées** (63 Go libres, aucune raison de se presser) :
+
+    rsu_local.sqlite.avant-vidage-20260927-185412        1 120 Mo
+    DATA_serveur.avant-vidage-20260927-185412.tar.gz       161 Mo
+    autres_dta.avant-vidage-20260927-185412.tar.gz          30 Mo
+
+La base a été copiée par `sqlite3 .backup`, qui donne une copie **cohérente**
+même application en marche — pas un `cp` sur un fichier en cours d'écriture.
+
+**Le service a été arrêté pendant l'opération** puis redémarré : `VACUUM` exige
+un accès exclusif, et 218 000 suppressions sous les lectures de l'application
+auraient invité un « database is locked ». Arrêt, vidage, `VACUUM`, redémarrage :
+`integrity_check` → `ok`, 0 redémarrage intempestif, 0 erreur au journal.
+
+**Traçabilité** : deux entrées écrites dans `journal_transcription`
+(« Suppression des données » et « Suppression des données VAD », district
+« TOUS »), visibles dans les journaux d'ingestion de `/admin`. Une collecte qui
+disparaît sans trace laisserait planer le doute : jamais collectée, ou effacée ?
+
+**Vérifié après coup — les pages ne plantent pas sur une base vide.** C'est le
+risque réel d'un vidage, et il a été éprouvé : liste des CE, liste des agents,
+les deux onglets de `/equipes`, les deux formulaires d'ajout, l'inventaire de
+suppression (qui renvoie bien « plus rien à supprimer »), la page de suppression,
+la base de préchargement et le référentiel — **10 rendus sans erreur**.
+
+Les trois applications répondent : `rsu-web` 200, STIB 302 (redirection de
+connexion, normale), CSWeb 200 ; contrôle de fuite STIB toujours vert
+(`/stib/config.py` → 404).
+
+### 2026-09-28 — LISTING DES ERREURS VAD : portage du do-file Stata dans l'application
+
+Demande : le bouton « Rapport Excel » de la section VAD doit produire les quatre
+classeurs du do-file INSTAT `do_listing_erreur_VAD_RSU_V2.do`, emballés dans un
+`.zip`, avec un contenu **selon le rôle**.
+
+**Nouveau module `vad_listing.py`** (≈ 640 lignes) et route `GET /vad/listing.zip`.
+
+| Rôle | Contenu de l'archive |
+|---|---|
+| Traitement, Expert survey, **Coordonnateur Nationale**, **Coordonnateur régionale**, Admin | tableau de bord + `base_erreur_menage/membre_numero_X` + un classeur par CE |
+| **Superviseur Technique** | tableau de bord + un classeur par CE, **sans** les fichiers Experts |
+
+Le Superviseur Technique ne corrige pas dans Survey Solutions : lui envoyer les
+fichiers des Experts n'aurait aucun usage. Les noms de rôle sont ceux de la table
+`responsabilite`, à l'accent près (`Coordonnateur régionale`) — un test le vérifie,
+parce qu'une faute d'accent donnerait un refus silencieux.
+
+**Le périmètre vient de `_vad_perimetre`, jamais de l'URL.** Conséquence utile :
+un SupTech borné à ses communes par `superviseur_commune` ne reçoit
+automatiquement que SES chefs d'équipe, sans filtre supplémentaire à écrire.
+
+#### Ce qui a été vérifié avant d'écrire une ligne
+
+La base porte-t-elle les ~80 variables des contrôles ? **Oui** : `vad_menage` a
+177 colonnes, `vad_membre` 113, value labels compris. Deux surprises, qui
+répondent à des doutes notés en lisant le do-file :
+
+- **`H3` n'existe pas** dans les données. Son absence de la liste
+  `err_caract_log` du do-file est donc **correcte**, pas un oubli.
+- **`AUEM17h` n'existe pas** non plus — même conclusion pour `err_handicap`.
+
+#### Le seul trou, et comment il est bouché
+
+`interview__actions` n'est **pas** ingéré par `vad_db` : c'est de là que le
+do-file tire `CQ2`, le login du chef d'équipe. Sans lui, pas de fichier par CE.
+
+⚠️ **`charger_ce_vad.py` ne peut pas tourner sur ce serveur** : il importe
+pyreadstat, et **ni pandas ni pyreadstat ne sont installés** (le venv est en
+bibliothèque standard + openpyxl, 34 paquets). `vad_listing.charger_ce()` lit
+donc `interview__actions.dta` avec **`lire_dta`**, le lecteur `.dta` en Python
+pur du projet — aucune dépendance ajoutée à une machine de production.
+
+Trois voies en cascade, parce que le dossier d'export finit par être purgé :
+
+1. `vad_ce`, alimentée depuis `interview__actions.dta` (la voie du do-file) ;
+2. sinon `agent.login_ce` via l'enquêteur (`vad_diagnostics.responsible`) ;
+3. sinon « SANS_CE », comme le do-file.
+
+Sans le repli 2, le jour où l'export disparaît du disque, les 81 classeurs par
+CE se réduiraient à un seul fichier « SANS_CE » — sans que rien ne le signale.
+
+#### Le piège des valeurs manquantes de Stata
+
+**En Stata un manquant est PLUS GRAND que tout nombre.** `M4>5` est donc VRAI
+quand l'âge est manquant : le do-file s'en protège partout par `& !missing(M4)`,
+et s'appuie à l'inverse sur `M4<12` qui est FAUX sur un manquant. Porté
+naïvement, `err_handicap` aurait signalé tous les âges vides et `err_cm_cj` en
+aurait raté. D'où `_gt`/`_ge` (jamais vrais sur un manquant) et `_lt` (idem),
+qui reproduisent les deux comportements — avec le pourquoi écrit au-dessus.
+
+Deuxième subtilité, les chaînes : `""` = question **non posée** (filtre),
+`"##N/A##"` = question **posée sans réponse**. `missing()` ne vaut que pour la
+première ; `_na()` couvre les deux là où le do-file le fait.
+
+#### Les messages en malgache
+
+Le do-file les obtient par `label define 0 "" 1 "…"`, qu'`export excel`
+transcrit dans la cellule. openpyxl n'a pas de value labels : la chaîne est donc
+écrite directement. Une cellule **vide** = pas d'erreur, une cellule remplie
+porte la consigne — le même classeur à l'arrivée.
+
+#### Le SupTech vient de la base, pas d'un Excel à remplir
+
+Le do-file lit `0_PARAMETRES/REPARTITION_EQUIPES.xlsx`, complété à la main.
+L'information existe déjà : **`superviseur_commune`** affecte chaque SupTech à
+ses communes. La commune retenue pour un CE est celle où il a le plus de
+ménages, comme le `bysort CQ2 (n): keep if _n==_N` du do-file. Une donnée déjà
+saisie ne se redemande pas.
+
+#### Un seul écart assumé avec le do-file : le registre
+
+Le do-file incrémente `nb_signalements` **à chaque exécution** — juste quand une
+personne le lance une fois par jour. Ici **cinq rôles** peuvent cliquer le même
+matin : un ménage signalé une fois afficherait « Relance n°5 ». La nouvelle table
+`vad_registre_erreurs` n'incrémente donc **qu'une fois par jour et par ménage**,
+la date servant de verrou. La structure des fichiers est identique ; seule
+l'étiquette « Relance n°X » est protégée de l'inflation.
+
+#### Vérifié sur les données réelles d'Avaradrano (1106)
+
+223 ménages contrôlés, 913 membres, 180 CE, 182 enquêteurs. **19 tests, 0 échec**
+(matrice des cinq rôles, refus des quatre rôles non habilités, Vaovao → Relance,
+non-inflation le même jour, district vide sans plantage).
+
+Structure conforme, colonne par colonne : ménage Experts **15 colonnes**, membre
+Experts **58** (8 identifiants + 10 séries × 5 membres max, groupées **par
+erreur** puis par numéro de membre comme la double boucle du do-file),
+**Feuil3 à 45 lignes**, classeur CE à **11 / 2 / 16** colonnes, tableau de bord à
+**5 feuilles**.
+
+#### Deux constats de qualité que le portage a mis au jour
+
+1. ⚠️ **`CQ10` (ID RSU) n'a que 34 valeurs distinctes pour 228 ménages** — une
+   valeur revient jusqu'à 13 fois. D'où `cc_idrsu_double` à **217 sur 223**. Ce
+   n'est pas un défaut du contrôle : l'identifiant est réellement réutilisé. À
+   traiter avec le terrain avant que la base ne se remplisse.
+2. **25 ménages sur 208** ont un GPS de référence de ZD (`GPS_Lat_ZD`,
+   **préchargé**) qui pointe vers ≈ −25,04 / 46,38, soit **Taolagnaro, à 697 km**
+   des ménages d'Avaradrano. La médiane des distances est de 0,1 km : le
+   préchargement est bon dans l'ensemble, faux sur ces 25 cas.
+
+⚠️ Chaque téléchargement est **consigné** dans `journal_transcription`
+(« Listing erreurs VAD ») : ces classeurs sortent des données **nominatives** du
+serveur — nom du chef de ménage et nom des membres — et un `LISEZ-MOI.txt` le
+rappelle dans l'archive.
+
+**Le classeur de synthèse n'a pas été supprimé.** `/vad/rapport.xlsx` (6
+feuilles, propre à l'application) reste accessible par un second lien discret
+« Synthèse (1 classeur) » à côté du bouton : il a sa valeur, et rien n'obligeait
+à le sacrifier pour ajouter le nouveau.
+
+Sauvegardes : `vad_listing.py.avant-correctif`, `serveur_app.py.avant-listing`,
+`vad_web.py.avant-listing`.
+
+### 2026-09-28 — INCIDENT : 502 sur /vad/listing.zip, et la leçon de test
+
+**Signalé par l'utilisateur** au premier clic réel sur le bouton :
+`502 Proxy Error — Error reading from remote server`.
+
+**Cause** — `AttributeError: 'Handler' object has no attribute
+'_vad_listing_get'`. La **route** appelait une méthode qui n'avait jamais été
+écrite dans la classe. Le processus levait l'exception, fermait la connexion, et
+Apache rendait un 502.
+
+**Pourquoi le patch avait échoué sans le dire.** Le script d'installation faisait
+deux insertions successives dans `serveur_app.py` — la route, puis la méthode —
+chacune protégée par un garde d'idempotence. Le second garde était :
+
+    if "_vad_listing_get" not in s:        # <-- FAUX
+
+Or l'insertion de la **route**, trois lignes plus haut, venait précisément
+d'introduire cette chaîne dans `s`. La condition était donc fausse, la méthode
+n'a jamais été écrite — et le contrôle final, `print("handler",
+"_vad_listing_get" in s)`, affichait **True** pour la même raison. Le garde et
+le test étaient faux **de la même façon**, donc ils se couvraient l'un l'autre.
+
+👉 Règle : **un garde d'idempotence et un contrôle doivent porter sur ce qu'ils
+prétendent vérifier** — ici `"def _vad_listing_get"`, le seul marqueur qui
+distingue la définition de son appel. Un test qu'une autre étape du même script
+peut satisfaire ne teste rien.
+
+**Pourquoi la vérification HTTP ne l'a pas vu non plus.** J'avais contrôlé
+`curl /vad/listing.zip` → **303 vers /login** et conclu « route protégée, tout
+va bien ». Mais ce 303 vient d'un **garde d'authentification placé AVANT** la
+route dans `do_GET` : la méthode n'était jamais atteinte. Une redirection prouve
+que l'accès est fermé, **pas** que le code derrière existe.
+
+👉 Règle : **tester une route non authentifiée ne teste que l'authentification.**
+
+**Correctif** : méthode posée (`serveur_app.py.avant-handler` en sauvegarde), et
+surtout un test qui exécute le **vrai corps** de `Handler._vad_listing_get` avec
+un objet fournissant ses seuls collaborateurs (`_redirige`, `_html`, `_octets`,
+`_vad_perimetre`). **10 contrôles, 0 échec** : redirection sans session, 403 sur
+rôle non habilité, archive complète pour Expert survey (549 Ko, 85 fichiers,
+`testzip()` valide), absence des fichiers Experts pour le Superviseur Technique,
+et écriture au journal. `hasattr()` ne remplace pas l'exécution — c'est
+exactement l'erreur qui a produit ce 502.
+
+**Traces d'essai retirées** : le registre `vad_registre_erreurs` (83 ménages
+passés à « signalés » par mes tests sur des données de production) a été remis à
+zéro, et les deux entrées de journal `essai_*` supprimées — le premier vrai clic
+doit afficher « Vaovao », pas « Relance n°1 ».
+
+### 2026-09-28 — numpy, pandas et pyreadstat installés ; `requirements.txt` créé
+
+À la demande de l'utilisateur, après avoir établi que l'installation était
+**possible** — ma formulation précédente (« ne peut pas tourner ») décrivait un
+état, pas une impossibilité, et c'était trompeur.
+
+    numpy==1.26.4    pandas==2.2.3    pyreadstat==1.3.6
+
+Vérifié : import, calcul, et lecture d'un vrai `.dta` (1 974 lignes, 9 colonnes).
+venv passé de 34 à 39 paquets, 352 Mo. Service intact, 0 redémarrage.
+
+⚠️ **`requirements.txt` créé dans la foulée, et c'est le vrai livrable.** Sans
+lui la contrainte se perdait : le processeur de ce serveur n'expose pas
+**x86-64-v2** (ni `sse4_1`, ni `sse4_2`, ni `ssse3`, ni `popcnt` — relevé dans
+`/proc/cpuinfo`), et `pip install numpy` installerait aujourd'hui la **2.4.x**,
+qui lève à l'import :
+
+    NumPy was built with baseline optimizations (X86_V2)
+    but your machine doesn't support (X86_V2)
+
+Le fichier porte les versions **et la raison**, comme celui de STIB.
+
+**Ces paquets ne sont pas nécessaires au fonctionnement.** Un seul module les
+utilise (`charger_ce_vad.py`). Le serveur, les tableaux de bord, l'export et le
+listing VAD n'en dépendent pas : `vad_listing.charger_ce()` fait le même travail
+avec `lire_dta`, en Python pur.
+
+👉 **Les deux lecteurs ont été comparés** sur `interview__actions.dta` d'Avaradrano :
+`lire_dta` et `pyreadstat` renvoient **232 interviews, 0 clé divergente, 0 chef
+d'équipe différent**. Le portage en Python pur est donc validé par une
+implémentation indépendante — et RSU-web peut se passer de ces paquets sans rien
+perdre.
+
+### 2026-09-28 — Les exports portent l'heure du POSTE, plus celle du serveur
+
+Demande de l'utilisateur après le premier usage réussi du bouton.
+
+**Le problème était réel et discret.** Le serveur tourne en **`Etc/UTC`** ;
+Madagascar est à **UTC+3**. Un export lancé à 05h35 à Antananarivo s'appelait
+`..._20260928_02H35` — et lancé avant 3h du matin, il portait **la veille**.
+Deux archives d'un même matin auraient pu paraître à un jour d'écart.
+
+C'est aussi une question de fidélité : le do-file Stata s'exécute sur le poste
+Windows de l'utilisateur, donc à l'heure locale. Corriger cela **rapproche** le
+portage de l'original au lieu de l'en éloigner.
+
+**Le mécanisme.** Le navigateur ajoute son décalage au lien avant le clic :
+
+    a.href += '?tz=' + (-new Date().getTimezoneOffset());   /* minutes à l'EST */
+
+et le serveur décale son horloge d'autant. Une seule ligne de JavaScript, posée
+en tête de `vad_web._JS`, qui vise les **deux** liens d'export — sans quoi
+l'archive serait à l'heure du poste et le classeur de synthèse en UTC.
+
+**On transmet le DÉCALAGE, pas une date toute faite.** C'est le point de
+conception : un paramètre libre venu du navigateur finirait **tel quel dans un
+nom de fichier**. Le décalage, lui, est un entier borné à [-720, +840] — les
+fuseaux réels — et le serveur garde la main sur le format. Vérifié : `abc`,
+`99999`, `1.5` et `3'; DROP TABLE` sont tous rejetés.
+
+**Repli silencieux.** Sans paramètre, ou avec un paramètre aberrant, le serveur
+retombe sur sa propre horloge et l'export fonctionne quand même. Un navigateur
+sans JavaScript ne doit pas se retrouver privé de téléchargement pour une
+question de nom de fichier.
+
+**Portée** : le nom du `.zip` **et** celui de tous les classeurs qu'il contient,
+puisque `generer_zip` dérive tout d'un seul cachet — ainsi que
+`Rapport_VAD_<district>_<date>.xlsx`, via `export_vad.nom_fichier(districts,
+quand)` qui acceptait déjà une date.
+
+Effet de bord utile : le verrou « une relance par jour » du registre suit
+désormais la **journée de l'équipe**, pas la journée UTC.
+
+**16 tests, 0 échec** : lecture et validation du paramètre (7 valeurs refusées),
+écart de 180 min vérifié, nom du zip et des classeurs internes à l'heure locale,
+repli sans `tz`, repli sur `tz` invalide sans plantage.
+
+Sauvegardes : `vad_listing.py.avant-heure-locale`,
+`serveur_app.py.avant-heure-locale`, `vad_web.py.avant-heure-locale`.
+
+### 2026-09-28 — Capacité : deux correctifs, gain mesuré
+
+Question de l'utilisateur : « 403 utilisateurs — est-ce que ce serveur tient,
+avec 2 cœurs et 8 Go, contre 15 cœurs et 15 Go à l'INSTAT ? »
+
+**Deux chiffres corrigés d'abord.** Le serveur n'a pas 8 Go : **3,9 Go** mesurés,
+2 cœurs, **aucun swap**. Et 403 est le nombre de **comptes**, pas de connexions
+simultanées.
+
+**L'usage réel**, lu dans `journal_connexion` : 46 à 84 comptes distincts par
+jour, et une **pointe de 33 comptes distincts sur une heure** (13/09 à 9h). Il
+n'y a jamais eu 403 personnes en même temps.
+
+#### Le diagnostic : ce n'était ni les cœurs ni la RAM
+
+| Charge simultanée | Avant — pire cas | Avant — débit |
+|---|---|---|
+| 5 / 10 / 20 | 11 ms | ~860 req/s |
+| **30** | **1 029 ms** | 28,6 req/s |
+| **50** | **1 028 ms** | 48,2 req/s |
+
+Pendant ce test : **0,1 % de CPU**, 3,2 Go libres. La machine ne faisait rien.
+Ce pic à une seconde était la **file d'attente des connexions**, laissée à la
+valeur par défaut de `socketserver` : **5**. Au-delà, le noyau fait patienter le
+client jusqu'à la retransmission TCP. Aucune requête n'était perdue — elles
+attendaient.
+
+#### Correctif 1 : la file d'attente (une ligne)
+
+    socketserver.ThreadingTCPServer.request_queue_size = 128   # etait 5
+    socketserver.ThreadingTCPServer.daemon_threads = True
+
+Vérifié sur la socket elle-même (`ss -ltn`, colonne Send-Q d'un LISTEN) :
+**128**, contre 5 auparavant. Pour comparaison, gunicorn sur STIB est à 2048.
+
+**Gain mesuré, même test :**
+
+| Charge | Pire cas avant | Pire cas après | Débit avant | Débit après |
+|---|---|---|---|---|
+| 30 | 1 029 ms | **9 ms** | 28,6/s | **1 172/s** |
+| 50 | 1 028 ms | **13 ms** | 48,2/s | **1 404/s** |
+
+Soit **×41 de débit à 30 connexions**, ×29 à 50, et le pic d'une seconde
+disparu. Zéro échec avant comme après.
+
+#### Correctif 2 : cache des agrégats VAD
+
+`vad_core.agrege` coûte **252 ms de calcul Python** pour 228 ménages. Cache de
+60 s, verrou dédié, clé incluant le **périmètre** — deux utilisateurs de
+périmètres différents ne peuvent pas se voir servir le même résultat.
+
+**252 ms → 0 ms** sur appel suivant.
+
+⚠️ **Le résultat est rendu en COPIE DE SURFACE**, et c'est indispensable :
+`serveur_app` écrit `agg["agentSel"]` après coup. Sans la copie, la sélection
+d'un utilisateur fuirait vers les suivants — invisible en test à un seul
+utilisateur, systématique en production. Vérifié par test.
+
+Le cache est purgé par `serveur_app._vider_cache()`, déjà appelé aux 6 endroits
+où les données changent : une transcription reste **visible immédiatement**.
+
+#### Pourquoi 15 cœurs n'auraient presque rien changé
+
+RSU-web tourne en **un seul processus Python**. À cause du GIL, un processus
+n'exécute du bytecode que sur **un cœur à la fois**. Le plafond des pages
+lourdes était donc de ~4 par seconde **sur 2 cœurs comme sur 15**. Migrer vers
+la machine de l'INSTAT sans changer l'architecture aurait coûté un déménagement
+pour un gain proche de zéro.
+
+Concrètement, avant : 403 tableaux de bord demandés ensemble = 403 × 252 ms =
+**103 secondes de calcul mis bout à bout**. Après, sur un même périmètre : le
+premier paie 252 ms, les 402 autres sont servis par le cache.
+
+#### ⚠️ Ce qui N'A PAS été fait, et le verrou à lever d'abord
+
+Passer à **plusieurs processus** (gunicorn, comme STIB) multiplierait vraiment
+la capacité par le nombre de cœurs. **C'est impossible en l'état** :
+
+    serveur_app.py:78    _SESSIONS = {}
+
+Les sessions vivent dans un dictionnaire **en mémoire du processus**. Avec
+plusieurs processus, un utilisateur identifié par l'un serait inconnu de
+l'autre : déconnexions aléatoires à chaque requête. **Il faut d'abord sortir les
+sessions en base** — c'est le prérequis de toute montée en charge, et le
+véritable chantier avant une migration vers 15 cœurs.
+
+Rappel du risque déjà noté : processus unique **sans arbitre**, machine **sans
+swap**. `Restart=always` relance un plantage, pas un figement.
+
+Non-régression : `/rsu-web/login` 200, listing 303, 0 traceback, 0 redémarrage,
+STIB et CSWeb intacts. Sauvegardes `serveur_app.py.avant-capacite`,
+`vad_core.py.avant-capacite`.
+
+### 2026-09-28 — Les sessions passent en base : le verrou du multi-processus est levé
+
+Suite du travail de capacité. `serveur_app._SESSIONS` était un dictionnaire de
+module : c'est lui qui interdisait plusieurs processus, donc l'usage de plus
+d'un cœur.
+
+**Nouveau module `sessions.py`** — table `session(jeton PK, login, donnees,
+vu, cree)`. Le dictionnaire de session est stocké en **JSON** ; `vu` (dernière
+activité) est une **colonne**, parce que c'est le seul champ écrit à chaque
+requête et qu'on veut le filtrer en SQL sans décoder le reste.
+
+#### Le piège : dix-sept endroits modifient la session
+
+`sess["selection"]`, `sess["vad_district"]`, mais aussi les caches des bulles
+(`_journal_ck`, `_consignes_n`, `_touch`…). Ajouter une écriture à chacun aurait
+été fragile : il aurait suffi d'en oublier un — ou qu'on en ajoute un plus tard —
+pour qu'une modification disparaisse **en silence**.
+
+D'où `_Session(dict)`, qui **retient qu'il a été modifié**, et un unique
+`_flush_session()` appelé en fin de requête depuis `do_GET`/`do_POST`, dans un
+`finally` : la session est écrite quel que soit le chemin suivi, **y compris si
+une exception traverse le traitement**. Le routage a été déplacé dans
+`_router_GET`/`_router_POST`, les points d'entrée ne faisant plus que cela.
+
+Deux raffinements qui évitent des écritures inutiles :
+- réécrire la **même valeur** ne marque pas la session modifiée ;
+- `_vu` est posé par `dict.__setitem__` **sans** marquer la modification : il a
+  sa colonne et son propre rythme (`toucher()`, au plus une écriture par minute
+  via `DELAI_VU`). Sans cela, chaque requête aurait réécrit tout le JSON.
+
+`_session()` **mémorise** aussi son résultat sur le handler : il est appelé
+plusieurs fois par requête, ce qui faisait autant de lectures en base.
+
+#### WAL : le prérequis qu'on aurait pu oublier
+
+`db_source.connect()` rendait un `sqlite3.connect(chemin)` nu :
+`journal_mode=delete`, `busy_timeout=0`. Avec plusieurs processus, cela donne
+des « database is locked » secs. Désormais :
+
+    PRAGMA journal_mode=WAL        lecteurs et ecrivain en parallele
+    PRAGMA busy_timeout=30000      30 s d'attente plutot qu'un echec
+    PRAGMA synchronous=NORMAL      sur WAL : sur, et nettement plus vif
+
+Vérifié en place : `journal_mode = wal`, `busy_timeout = 30000`, fichiers
+`-wal` et `-shm` présents.
+
+#### 22 tests, 0 échec — dont celui qui décide de tout
+
+Un **processus séparé** (PID différent, lancé par `subprocess`) lit la session
+écrite par le premier, **avec la sélection de district faite dans l'autre
+processus**. C'est exactement ce qui était impossible avant.
+
+Également vérifiés : survie des sous-dictionnaires (`utilisateur`), expiration
+par inactivité et retrait de la base, comptage qui ignore les expirées, purge,
+marquage/démarquage du drapeau de modification, et mémorisation par requête.
+
+#### Effet immédiat, visible par tout le monde
+
+**Un redémarrage ne déconnecte plus personne.** Jusqu'ici, chaque `systemctl
+restart` vidait le dictionnaire et renvoyait tous les utilisateurs à l'écran de
+connexion — y compris pour un déploiement de trois secondes.
+
+Non-régression : `/login` 200, `/admin` 303, listing 303, 0 traceback, débit
+inchangé (1 807 req/s à 50 connexions simultanées, contre 1 404 avant — la
+lecture de session en base ne coûte rien de mesurable).
+
+#### ⚠️ Il reste UN verrou avant de passer à plusieurs processus
+
+    serveur_app.py:159    _CACHE = {}        # rapports fokontany — SANS durée de vie
+
+Ce cache n'est vidé que par `_vider_cache()`. Avec plusieurs processus, une
+transcription faite sur le processus A **ne viderait pas** le cache du processus
+B : celui-ci servirait un rapport périmé **indéfiniment**, sans expiration pour
+le rattraper. (`vad_core._CACHE_AGREGE` a le même défaut, mais ses 60 s de durée
+de vie bornent le dégât.)
+
+👉 Avant gunicorn : donner une durée de vie à `_CACHE`, ou remplacer
+`_vider_cache()` par un **compteur de version en base** que chaque processus
+relit. C'est le dernier obstacle connu — les sessions, elles, ne s'y opposent
+plus.
+
+Sauvegardes : `serveur_app.py.avant-sessions`, `db_source.py.avant-sessions`.
+
+### 2026-09-28 — Dernier verrou levé : les caches se périment entre processus
+
+`serveur_app._CACHE` (rapports fokontany/commune/district) n'avait **aucune
+durée de vie** : il n'était vidé que par `_vider_cache()`. Avec plusieurs
+processus, une transcription faite sur le processus A n'aurait pas vidé le cache
+de B, qui aurait servi un rapport périmé **indéfiniment**.
+
+**Nouveau module `cache_version.py`** — un entier en base, incrémenté à chaque
+changement de données. Chaque processus retient la version qu'il connaît ; s'il
+en voit une plus récente, il vide ses propres caches (`_CACHE` **et**
+`vad_core._CACHE_AGREGE`).
+
+**Pourquoi pas une simple durée de vie** : elle laisse servir des données
+fausses pendant tout son délai, et fait recalculer même quand rien n'a changé.
+Le compteur ne périme que ce qui doit l'être, au moment où il le faut.
+
+L'incrément se fait **en SQL** (`version = version + 1`), pas en Python : deux
+processus qui transcrivent en même temps ne doivent pas écraser l'incrément l'un
+de l'autre.
+
+La lecture est espacée de `DELAI_VERSION = 2 s` — une page légère coûte 1 ms, une
+transcription dure des secondes ; deux secondes de retard au pire. Un processus
+qui **démarre** aligne sa version sans rien vider (`_CACHE_VERSION = -1`).
+
+**10 tests, 0 échec**, dont celui qui décide : un **processus séparé** incrémente,
+et le cache local du premier se vide au passage suivant.
+
+---
+
+#### ⚠️ Une erreur de diagnostic, corrigée — et ce qu'elle a révélé
+
+Le test de coût a d'abord échoué : une lecture du compteur coûtait **1,29 ms**,
+alors qu'une page entière coûte 1 ms. J'ai conclu que `PRAGMA journal_mode=WAL`,
+que je venais d'ajouter à `db_source.connect()`, en était la cause — le mode WAL
+étant persistant dans le fichier, le reposer à chaque connexion semblait un
+gaspillage évident.
+
+**C'était faux.** Après l'avoir sorti de `connect()`, le coût était inchangé
+(1,41 ms). Mesure isolée :
+
+| | |
+|---|---|
+| `connect()` seul | **0,046 ms** (paresseux : ne touche pas le fichier) |
+| `connect()` + `SELECT 1` | 0,064 ms |
+| `connect()` + un `PRAGMA` | 0,059 ms |
+| `connect()` + **vraie lecture de table** | **1,458 ms** |
+| la même lecture sur connexion **réutilisée** | **0,009 ms** |
+
+Le coût n'est pas celui d'une instruction particulière : c'est celui d'**ouvrir
+le fichier et lire le schéma** des 45 tables d'une base de 1,1 Go, payé à la
+première requête de toute connexion neuve. `sqlite3.connect()` est paresseux, ce
+qui déplace la facture sur la première instruction et brouille la mesure.
+
+La modification a été **conservée** (`activer_wal()` au démarrage plutôt qu'un
+PRAGMA par connexion : c'est plus propre), mais **sans lui attribuer un gain
+qu'elle n'a pas**.
+
+👉 **Le vrai levier suivant est là** : RSU-web ouvre **une connexion par appel**
+(`_session()`, `_synchroniser_cache()`, `_flush_session()`, puis chaque
+gestionnaire). À ~1,45 ms l'ouverture contre 0,009 ms sur une connexion
+réutilisée, une page authentifiée paie plusieurs millisecondes de pur
+protocole d'ouverture.
+
+Deux pistes, non faites ce soir — elles touchent tout le code d'accès aux
+données et méritent d'être traitées seules :
+1. **Une connexion par requête**, portée par le handler et fermée en fin de
+   requête (contenu, sûr, gain immédiat sur les pages authentifiées) ;
+2. **Un pool de connexions** partagé (gain maximal, mais change la sémantique
+   de `close()` pour tous les appelants — à faire avec méthode).
+
+⚠️ Ne pas refaire l'erreur de mesure : `sqlite3.connect()` ne coûte presque rien
+tant qu'on ne lit pas une table. Toute mesure de connexion doit inclure une
+**vraie lecture**.
+
+---
+
+Non-régression : `/login` 200, `/admin` 303, listing 303, **0 traceback**, débit
+1 667 req/s à 30 connexions simultanées. Quatre services actifs, STIB et CSWeb
+intacts, contrôle de fuite 404.
+
+Sauvegardes : `serveur_app.py.avant-version`, `db_source.py.avant-pragma`,
+`serveur_app.py.avant-pragma`.
+
+#### État de la montée en charge
+
+| | |
+|---|---|
+| ✅ | File d'attente des connexions : 5 → 128 |
+| ✅ | Cache des agrégats VAD (252 ms → 0 ms) |
+| ✅ | Sessions en base (plusieurs processus possibles) |
+| ✅ | WAL + `busy_timeout` |
+| ✅ | Péremption des caches entre processus |
+| ⬜ | Réutilisation des connexions (~1,45 ms par ouverture) |
+| ⬜ | Passage effectif à plusieurs processus (gunicorn) |
+
+Les deux dernières lignes sont ce qui reste avant que 15 cœurs servent à
+quelque chose.
+
+### 2026-09-28 — Réutilisation des connexions : 1,458 ms → 0,014 ms
+
+Dernier point de la montée en charge. Ouvrir une connexion **et lire une table**
+coûtait **1,458 ms** sur cette base (1,1 Go, 45 tables) : c'est la lecture du
+**schéma**, payée à la première requête de toute connexion neuve. La même
+lecture sur une connexion déjà ouverte : **0,009 ms**.
+
+Il y a **83 appels à `connect()`** dans le projet, et plusieurs par requête
+(`_session`, `_synchroniser_cache`, `_flush_session`, puis chaque gestionnaire).
+
+#### Mise en œuvre : contenue dans `db_source`, zéro appelant modifié
+
+`connect()` puise dans un pool de 8 ; `close()` **rend** la connexion au lieu de
+la fermer. Les 83 appelants gardent leur `try/finally: conn.close()` habituel.
+
+La connexion est une **sous-classe de `sqlite3.Connection`**, pas un proxy :
+elle reste une vraie connexion pour tout le code existant (`isinstance`,
+gestionnaire de contexte, `execute`), sans couche d'indirection.
+
+Trois garanties :
+
+1. **`rollback()` au retour** — une transaction non validée ne doit pas survivre
+   au prochain emprunteur, qui en hériterait sans le savoir. Vérifié par test :
+   un `INSERT` sans `commit` est bien annulé.
+2. **`cursor()` refuse une connexion déjà rendue.** Une connexion au pool peut
+   déjà servir un AUTRE fil d'exécution ; s'en resservir mélangerait deux
+   requêtes **en silence**. Mieux vaut une `ProgrammingError` explicite.
+3. **`SELECT 1` à l'emprunt** — une connexion abîmée est jetée plutôt que
+   rendue à un appelant.
+
+#### ⚠️ Le piège : les tests de type sur `type(conn).__module__`
+
+Cinq endroits déduisaient SQLite/PostgreSQL du **nom du module** de la
+connexion. Nos connexions étant des sous-classes, leur module est désormais
+« db_source » et non « sqlite3 ».
+
+Trois de ces tests écrivent `startswith("psycopg")` : ils restent justes. Mais
+**`integrer_rgph_complet.py` testait `== "sqlite3"`** — et ce test commandait la
+**sauvegarde de la base avant modification**. Sans correction, le script aurait
+écrit dans la base **sans filet**, sans rien signaler.
+
+D'où `db_source.est_sqlite(conn)`, qui pose la bonne question (`isinstance`), et
+les deux sites corrigés.
+
+#### Résultat mesuré
+
+| | |
+|---|---|
+| `connect()` + lecture + `close()` **avant** | 1,458 ms |
+| **après** | **0,014 ms** |
+| gain | **×106** |
+| 600 accès par 60 fils concurrents | 0,10 s, **600 réussis, 0 erreur** |
+| pool | borné à 8, respecté |
+
+**17 tests, 0 échec** : gain, identité de type, `_placeholder`, annulation des
+transactions, refus d'usage après `close()`, concurrence, et les modules métier
+(`zones`, `sessions`, `cache_version`, `vad_core.agrege`).
+
+#### Une erreur de méthode, répétée — à ne plus refaire
+
+Le garde d'idempotence du script de correction cherchait la chaîne
+`"est_sqlite"` dans `integrer_rgph_complet.py`… où elle existait déjà comme
+**nom de variable**. Le script a donc annoncé « déjà fait » sans rien faire.
+C'est **la deuxième fois dans la journée** (cf. l'incident 502) qu'un garde est
+satisfait par une chaîne présente pour une autre raison.
+
+👉 **Un garde doit porter sur un marqueur que seule la correction introduit** —
+ici `from db_source import est_sqlite`, pas `est_sqlite`.
+
+Non-régression : `/login` 200, `/admin` 303, 0 traceback, 1 496 req/s à 30
+connexions, **10 sessions actives conservées à travers le redémarrage**. Quatre
+services actifs, STIB et CSWeb intacts, fuite 404.
+
+Sauvegardes : `db_source.py.avant-pool`, `integrer_rgph_complet.py.avant-pool`.
+
+#### État de la montée en charge
+
+| | |
+|---|---|
+| ✅ | File d'attente des connexions : 5 → 128 (×41 de débit à 30 simultanés) |
+| ✅ | Cache des agrégats VAD (252 ms → 0 ms) |
+| ✅ | Sessions en base — plusieurs processus possibles |
+| ✅ | WAL + `busy_timeout` |
+| ✅ | Péremption des caches entre processus |
+| ✅ | Réutilisation des connexions (×106) |
+| ⬜ | **Passage effectif à plusieurs processus (gunicorn)** |
+
+Il ne reste que la dernière ligne. `TAILLE_POOL = 8` est par processus : avec N
+processus, compter N × 8 connexions ouvertes sur la base — sans conséquence,
+SQLite en WAL les supporte, mais c'est à savoir.
+
+### 2026-09-28 — PLUSIEURS PROCESSUS : la montée en charge est terminée
+
+Dernière étape. RSU-web sert désormais les requêtes depuis **N processus**,
+N valant par défaut le nombre de cœurs.
+
+#### Pourquoi le pré-fork et pas gunicorn
+
+RSU-web est bâti sur `http.server`, **pas sur WSGI**. Gunicorn aurait imposé de
+réécrire toute la couche HTTP — des centaines de routes, pour un résultat
+identique. Le pré-fork donne les N processus sans toucher une ligne de route.
+
+Le parent prépare tout (base, tables, socket d'écoute), puis se dédouble. Les
+enfants acceptent sur **le même socket** : le noyau répartit. Vérifié :
+
+    LISTEN 127.0.0.1:8000  users:(("python",pid=9152,fd=7),
+                                  ("python",pid=9151,fd=7),
+                                  ("python",pid=9148,fd=7))
+
+#### Le parent surveille — ce qui manquait depuis toujours
+
+Le parent ne sert **aucune** requête : il relance un enfant qui meurt.
+`Restart=always` de systemd ne voyait qu'un processus et ne rattrapait rien tant
+qu'il tenait debout. Vérifié en tuant un travailleur par `kill -9` : remplacé en
+moins de 3 secondes, **service ininterrompu**.
+
+#### ⚠️ Le pool de connexions est vidé AVANT le fork
+
+Une connexion SQLite **ne se transmet pas** à un processus enfant : ses verrous
+et son état interne sont liés au processus. Un enfant héritant d'une connexion
+ouverte pourrait corrompre les verrous des autres. Le parent ferme donc son pool
+avant de se dédoubler, et chaque enfant repart d'un pool vide.
+
+C'est le genre de détail qui ne se voit pas en test et corrompt une base en
+production.
+
+#### Windows reste en un seul processus
+
+`fork` n'existe pas sous Windows : le poste de développement passe par la
+branche mono-processus, inchangée. Le code teste `hasattr(os, "fork")`.
+
+#### Une erreur attrapée avant le déploiement
+
+`sys` n'était **pas importé** dans `serveur_app.py`, et mon code l'utilisait
+(`sys.stdout.isatty()`). Le service n'aurait rien montré — il tourne à 2
+processus et ne passe jamais par cette branche — mais **le poste sous Windows
+aurait planté au démarrage**. Corrigé avant le premier lancement.
+
+#### Le journal parle enfin
+
+`PYTHONUNBUFFERED=1` ajouté à l'unité systemd : sans lui, la sortie de Python
+est tamponnée et **aucun message n'atteignait le journal**. On lit désormais :
+
+    [app] mode SQLite : wal
+    [app] 1 session(s) expiree(s) purgee(s).
+    [app] 2 processus de service : [9151, 9152]
+
+`RSU_PROCESSUS` est déclaré (vide = un par cœur) et commenté dans l'unité :
+**sur la machine à 15 cœurs de l'INSTAT, y mettre 15** — compter environ 85 Mo
+par processus.
+
+#### Capacité mesurée, page AUTHENTIFIÉE
+
+| Simultanés | Médiane | Pire cas | Échecs | Débit |
+|---|---|---|---|---|
+| 10 | 6 ms | 8 ms | 0 | 913/s |
+| 30 | 4 ms | 8 ms | 0 | 1 264/s |
+| 60 | 9 ms | 17 ms | 0 | 1 412/s |
+| **100** | **14 ms** | **21 ms** | **0** | **1 445/s** |
+
+Une page authentifiée seule : **0,8 ms**. La lecture de session en base ne coûte
+plus rien, grâce au pool.
+
+Mémoire : parent 105 Mo, chaque travailleur ~85 Mo (l'essentiel partagé par
+copie à l'écriture). 3,2 Go libres.
+
+#### Le chemin parcouru dans la journée
+
+| | Avant | Après |
+|---|---|---|
+| 30 requêtes simultanées, pire cas | **1 029 ms** | **8 ms** |
+| débit à 30 simultanés | 28,6/s | **1 264/s** |
+| 100 simultanés | non mesuré (file à 5) | **0 échec, 21 ms** |
+| agrégats VAD | 252 ms | 0 ms (cache) |
+| connexion + lecture | 1,458 ms | 0,014 ms |
+| redémarrage | déconnecte tout le monde | sessions conservées |
+| travailleur mort | capacité perdue en silence | remplacé en 3 s |
+| cœurs utilisables | **1** | **tous** |
+
+**Les 403 comptes ne sont plus un sujet.** La pointe réelle (33 comptes sur une
+heure) est deux ordres de grandeur sous la capacité mesurée. Et le déménagement
+vers 15 cœurs aurait désormais un sens — il n'en avait aucun ce matin.
+
+#### Ce qui reste à surveiller
+
+- `TAILLE_POOL = 8` est **par processus** : N processus = N × 8 connexions sur
+  la base. Sans conséquence en WAL, mais à savoir.
+- Toujours **aucun swap** sur cette machine : un pic mémoire tue un processus.
+  Le parent le remplacera maintenant — c'est nouveau — mais la cause resterait.
+- `preparer()` (arbre du menu) tourne une fois, dans le parent, avant le fork :
+  les enfants en héritent. Une transcription ne le reconstruit pas — c'était
+  déjà vrai avant, cela n'a pas changé.
+
+Sauvegardes : `serveur_app.py.avant-multiprocessus`, et l'unité systemd dans
+`deploy/backups/rsu-web.service.avant-multiprocessus-*`.
+
+### 2026-09-28 — Le compteur de la page Traitement suivait la base entière, pas le district
+
+Signalé par l'utilisateur sur capture : un responsable Traitement affecté à
+**Vavatenina (5206)** lisait « 127 chef(s) d'équipe et 669 agent(s) » — les
+totaux de **toute** la base. Son district n'en compte que **76 et 291**.
+
+C'est trompeur dans les deux sens : on peut croire que son téléversement a
+chargé les équipes des autres districts, ou qu'il en manque.
+
+**La page de LISTE (`/equipes`, `equipes_liste`) était déjà bornée** au
+périmètre du rôle : c'est ce seul compteur, sur la page de téléversement, qui ne
+l'était pas.
+
+**Correctif** : `equipes.compter(conn, district=None)` et
+`page_equipes(..., district=...)`, les deux appels de `serveur_app` transmettant
+le `district_affectation` qu'ils lisaient déjà. Sans district (Admin, ou compte
+sans affectation), les totaux restent affichés — l'ancien comportement.
+
+La phrase distingue désormais les deux cas : « Actuellement en base **pour ce
+district** : … » contre « Actuellement en base : … ».
+
+**17 tests, 0 échec**, écrits en assertions RELATIVES (la base bougeait pendant
+le test, l'utilisateur téléversait) : cohérence de la somme districts +
+orphelins, chaque district conforme, district inconnu → 0, code invalide → 0 et
+non le total, et le rendu de la page dans les deux modes.
+
+⚠️ Première version des tests écrite avec les totaux **codés en dur** (127/1100) :
+4 faux échecs dès que l'utilisateur a téléversé. Sur une base vivante, une
+assertion sur un nombre absolu ne teste que l'heure qu'il était.
+
+#### ⚠️ 613 agents sans district — et ils ne sont récupérables par aucun lien
+
+Le correctif a mis au jour ce que le total masquait :
+
+| District | CE | Agents |
+|---|---|---|
+| 5201 Fenerive Est | 120 | 473 |
+| 5206 Vavatenina | 76 | 291 |
+| 3307 Lalangina | 51 | 196 |
+| **(sans district)** | **0** | **613** |
+
+Ces 613 agents **n'apparaissent dans aucun district**, donc dans aucune vue de
+responsable. Diagnostic :
+
+- **aucun n'a de `login_ce`** — ils ne viennent donc pas d'un téléversement
+  Excel, mais de `synchroniser_agents()`, qui crée une fiche pour chaque
+  enquêteur trouvé dans les données de collecte ;
+- leur district n'est donc dérivable **ni** du CE (il n'y en a pas), **ni** du
+  compte qui les a chargés (aucun) ;
+- en revanche leur **login porte la zone** : `FNRV` (431 agents) et `TANN` (182).
+
+👉 Le district reste donc déductible par le **code de zone du login**, exactement
+la méthode employée le 27/09 pour le rétro-remplissage (`EQ1_TANN_0111` → zone
+`TANN` → district). À faire sur décision de l'utilisateur, avec les mêmes
+vérifications préalables qu'en septembre : aucun agent à cheval sur deux
+districts, aucune zone ambiguë.
+
+La page le **signale** désormais au lieu de le taire : « ⚠️ N fiche(s) sans
+district en base : elles n'apparaissent dans aucun district ». Un responsable
+qui téléverse et lit « 0 agent » doit pouvoir comprendre pourquoi plutôt que de
+recommencer.
+
+Non-régression : service actif, 0 traceback, `/login` 200. Sauvegardes
+`equipes.py.avant-compte-district`, `serveur_app.py.avant-compte-district`.
+
+### 2026-09-28 — Suppression des fiches CE/AE sans district
+
+Demande de l'utilisateur, à la suite du constat de la section précédente.
+
+**Supprimé : 613 agents. Aucun chef d'équipe** — il n'y en avait pas sans
+district.
+
+    agent        1573  ->  960
+    chef_equipe   247  ->  247 (inchangé)
+
+Répartition restante, toutes fiches rattachées :
+
+| District | CE | Agents |
+|---|---|---|
+| 5201 Fenerive Est | 120 | 473 |
+| 5206 Vavatenina | 76 | 291 |
+| 3307 Lalangina | 51 | 196 |
+
+#### Ce qui a été vérifié AVANT de supprimer
+
+La suppression ne coûtait rien, et c'est la vérification qui le montre — pas la
+demande :
+
+1. **Toutes les tables de collecte sont vides** (`vad_menage`, `vad_diagnostics`,
+   `interview__diagnostics`, `den_menage`, `declaration_agent`). Les données
+   d'Avaradrano avaient été retirées entre-temps.
+2. **Zéro référence** vers ces 613 agents, dans aucune des trois tables qui
+   pointent sur `agent` (`declaration_agent`, `vad_diagnostics`,
+   `interview__diagnostics`).
+3. **Les 613 avaient `nom_prenom_ae` = `login_ae`** : le code répété, aucun nom
+   réel. Ce sont des fiches créées par `synchroniser_agents()`, qui insère une
+   ligne pour chaque code enquêteur trouvé dans les données — elles ne portaient
+   **aucune information**.
+
+👉 Si les tables de collecte n'avaient PAS été vides, ces 613 auraient été les
+enquêteurs des interviews en base : les supprimer aurait laissé des références
+orphelines et fait perdre le lien entre chaque interview et son agent. Le geste
+était sans risque **ce soir**, il ne l'aurait pas été la veille.
+
+⚠️ Et `synchroniser_agents()` les **recréera** au prochain téléversement de
+dénombrement, toujours sans district ni chef d'équipe : c'est sa raison d'être
+(garantir qu'un code agent des données a une ligne dans `agent`). La suppression
+nettoie l'existant, elle ne change pas ce comportement.
+
+#### Sauvegarde
+
+    deploy/backups/agents_sans_district-20260928-040352.csv   (18 Ko, 613 lignes)
+
+CSV avec en-tête, réinjectable tel quel. Vérifié après coup : plus aucune fiche
+sans district, aucun agent pointant vers un chef d'équipe inexistant,
+`PRAGMA integrity_check` = ok, service actif, 0 traceback.
+
+L'avertissement « fiche(s) sans district » de la page de téléversement ne
+s'affiche plus — il n'a plus lieu d'être.

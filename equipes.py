@@ -57,14 +57,51 @@ def creer_tables(conn) -> None:
 # ---------------------------------------------------------------------------
 # Accès / comptage
 # ---------------------------------------------------------------------------
-def compter(conn) -> dict:
-    """{'chefs': n, 'agents': m} — nombre d'enregistrements de chaque table."""
+def compter(conn, district=None) -> dict:
+    """Nombre de fiches, borne au DISTRICT quand il est fourni.
+
+    {'chefs', 'agents', 'chefs_sans_district', 'agents_sans_district'}
+
+    Sans `district` (Admin, ou compte sans affectation), on compte tout — c'est
+    l'ancien comportement.
+
+    Les fiches SANS district sont comptees a part et non ignorees : elles
+    n'apparaissent dans aucun district, donc personne ne les verrait. Un
+    responsable qui televerse et lit « 0 agent » doit pouvoir comprendre
+    pourquoi plutot que de recommencer son televersement.
+    """
+    ph = db_source._placeholder(conn)
     cur = conn.cursor()
-    cur.execute('SELECT COUNT(*) FROM "chef_equipe"')
-    chefs = cur.fetchone()[0]
-    cur.execute('SELECT COUNT(*) FROM "agent"')
-    agents = cur.fetchone()[0]
-    return {"chefs": chefs, "agents": agents}
+
+    def _n(sql, params=()):
+        cur.execute(sql, params)
+        return cur.fetchone()[0]
+
+    sans_ce = _n('SELECT COUNT(*) FROM "chef_equipe" WHERE "district_ce" IS NULL')
+    sans_ae = _n('SELECT COUNT(*) FROM "agent" WHERE "district_ae" IS NULL')
+
+    if district is None:
+        return {"chefs": _n('SELECT COUNT(*) FROM "chef_equipe"'),
+                "agents": _n('SELECT COUNT(*) FROM "agent"'),
+                "chefs_sans_district": sans_ce,
+                "agents_sans_district": sans_ae,
+                "district": None}
+    try:
+        code = int(district)
+    except (TypeError, ValueError):
+        code = None
+    if code is None:
+        return {"chefs": 0, "agents": 0, "chefs_sans_district": sans_ce,
+                "agents_sans_district": sans_ae, "district": None}
+    return {
+        "chefs": _n(f'SELECT COUNT(*) FROM "chef_equipe" WHERE "district_ce"={ph}',
+                    (code,)),
+        "agents": _n(f'SELECT COUNT(*) FROM "agent" WHERE "district_ae"={ph}',
+                     (code,)),
+        "chefs_sans_district": sans_ce,
+        "agents_sans_district": sans_ae,
+        "district": code,
+    }
 
 
 def _chef_existe(conn, login_ce) -> bool:
@@ -77,36 +114,161 @@ def _chef_existe(conn, login_ce) -> bool:
 # ---------------------------------------------------------------------------
 # Lien avec les données de dénombrement (interview__diagnostics.responsible)
 # ---------------------------------------------------------------------------
-def synchroniser_agents(conn) -> int:
-    """Complète `agent` à partir des codes agent présents dans les données de
-    dénombrement (`interview__diagnostics.responsible`).
+_NA = "##N/A##"                            # marqueur « manquant » de Survey Solutions
 
-    Tout code présent dans le dénombrement mais ABSENT de la table `agent` y est
-    inséré, avec le NOM = le CODE lui-même (et chef d'équipe inconnu). Ainsi chaque
-    code agent des données a bien une ligne dans `agent` (intégrité de la clé
-    étrangère garantie côté Python). Renvoie le nombre d'agents créés. Sans effet si
-    la table de dénombrement n'existe pas encore (base neuve)."""
+
+def _code_propre(v) -> str:
+    """Code agent nettoyé ; "" pour un vide ou un « ##N/A## »."""
+    s = ("" if v is None else str(v)).strip()
+    return "" if s == _NA else s
+
+
+def _zone_du_login(login):
+    """`EQ1_MDTR_0002` -> 'MDTR' (casse ignorée : `bELO` = `BELO`, relevé le
+    27/09). None si le login n'a pas la forme PREFIXE_ZONE_NUMERO."""
+    parties = str(login or "").strip().split("_")
+    if len(parties) >= 3 and parties[1].strip():
+        return parties[1].strip().upper()
+    return None
+
+
+def _districts_connus(conn) -> set:
+    """Codes présents dans `district` : cible de la clé étrangère `district_ae`.
+    Un code hors référentiel ne doit jamais être écrit."""
+    cur = conn.cursor()
+    try:
+        cur.execute('SELECT "code_district" FROM "district"')
+        return {int(r[0]) for r in cur.fetchall() if r[0] is not None}
+    except Exception:
+        return set()
+
+
+def _unique(vus: dict) -> dict:
+    """{clé: {districts}} -> {clé: district} pour les seules clés NON ambiguës."""
+    return {k: next(iter(s)) for k, s in vus.items() if len(s) == 1}
+
+
+def _districts_enquetes(conn, table_diag, table_menage, col_district) -> dict:
+    """{code agent: district} d'après les INTERVIEWS : le district où l'agent a
+    réellement enquêté, quand il est unique. C'est la source la plus sûre — elle
+    ne dépend pas de la façon dont le login a été composé."""
+    cur = conn.cursor()
+    try:
+        cur.execute(f'SELECT DISTINCT d."responsible", m."{col_district}" '
+                    f'FROM "{table_diag}" d JOIN "{table_menage}" m '
+                    f'ON m."interview__key" = d."interview__key" '
+                    f'WHERE d."responsible" IS NOT NULL '
+                    f'AND m."{col_district}" IS NOT NULL')
+        lignes = cur.fetchall()
+    except Exception:
+        return {}                         # tables absentes (base neuve)
+    vus = {}
+    for code, dist in lignes:
+        c = _code_propre(code)
+        try:
+            d = int(float(dist))
+        except (TypeError, ValueError):
+            continue
+        if c:
+            vus.setdefault(c, set()).add(d)
+    return _unique(vus)
+
+
+def _districts_par_zone(conn) -> dict:
+    """{zone: district} d'après les fiches DÉJÀ rattachées (agents et CE), pour
+    les seules zones qui ne pointent que sur UN district — la méthode du
+    rétro-remplissage du 27/09. Une zone ambiguë ou inconnue ne donne rien."""
+    cur = conn.cursor()
+    vus = {}
+    for sql in ('SELECT "login_ae","district_ae" FROM "agent" '
+                'WHERE "district_ae" IS NOT NULL',
+                'SELECT "login_ce","district_ce" FROM "chef_equipe" '
+                'WHERE "district_ce" IS NOT NULL'):
+        try:
+            cur.execute(sql)
+            lignes = cur.fetchall()
+        except Exception:
+            continue                      # colonne district absente (ancien schéma)
+        for login, dist in lignes:
+            z = _zone_du_login(login)
+            if z:
+                vus.setdefault(z, set()).add(int(dist))
+    return _unique(vus)
+
+
+def synchroniser_agents_detail(conn, table_diag="interview__diagnostics",
+                               table_menage="den_menage",
+                               col_district="district") -> dict:
+    """Complète `agent` à partir des codes agent présents dans les données de
+    collecte (`<table_diag>.responsible`), en posant le DISTRICT dès la création.
+
+    Tout code présent dans les données mais ABSENT de `agent` y est inséré, avec le
+    NOM = le CODE (le nom réel vient du téléversement Excel) et chef d'équipe
+    inconnu. Ainsi chaque code agent des données a une ligne dans `agent`
+    (intégrité de la clé étrangère garantie côté Python).
+
+    Le district est déduit, par ordre de confiance :
+      1. des interviews — le district où l'agent a enquêté, s'il est unique ;
+      2. du code de zone du login, si cette zone ne désigne qu'un district parmi
+         les fiches déjà rattachées ;
+      3. sinon NULL. Un district faux se propagerait silencieusement dans tous
+         les comptages ; un district vide se voit (page /equipes, filtre Admin).
+
+    Les agents EXISTANTS sans district reçoivent le district par la même règle.
+    Un district déjà enregistré n'est JAMAIS remplacé.
+
+    Avant le 2026-09-28, les fiches étaient créées sans district : 613 d'entre
+    elles, invisibles de tout responsable, ont dû être supprimées à la main.
+
+    Renvoie {'crees', 'crees_sans_district', 'districts_poses'}. Sans effet si
+    la table de collecte n'existe pas encore (base neuve)."""
+    bilan = {"crees": 0, "crees_sans_district": 0, "districts_poses": 0}
     creer_tables(conn)
     cur = conn.cursor()
     try:
-        cur.execute('SELECT DISTINCT "responsible" FROM "interview__diagnostics" '
+        cur.execute(f'SELECT DISTINCT "responsible" FROM "{table_diag}" '
                     'WHERE "responsible" IS NOT NULL')
-        codes = [r[0] for r in cur.fetchall()]
+        codes = sorted({c for c in (_code_propre(r[0]) for r in cur.fetchall())
+                        if c})
     except Exception:
-        return 0                          # table de dénombrement absente
+        return bilan                      # table de collecte absente
+    if not codes:
+        return bilan
+
+    connus = _districts_connus(conn)
+    par_enquete = _districts_enquetes(conn, table_diag, table_menage, col_district)
+    par_zone = _districts_par_zone(conn)
+
+    def _district(code):
+        d = par_enquete.get(code)
+        if d is None:
+            d = par_zone.get(_zone_du_login(code))
+        return d if d in connus else None
+
     ph = db_source._placeholder(conn)
-    ajoutes = 0
-    for code in codes:
-        c = ("" if code is None else str(code)).strip()
-        if not c:
-            continue
-        cur.execute(f'SELECT 1 FROM "agent" WHERE "login_ae"={ph}', (c,))
-        if cur.fetchone() is None:
-            cur.execute('INSERT INTO "agent" ("login_ae","nom_prenom_ae","login_ce") '
-                        f'VALUES ({ph},{ph},NULL)', (c, c))   # nom = code
-            ajoutes += 1
+    for c in codes:
+        cur.execute(f'SELECT "district_ae" FROM "agent" WHERE "login_ae"={ph}', (c,))
+        row = cur.fetchone()
+        d = _district(c)
+        if row is None:
+            cur.execute('INSERT INTO "agent" ("login_ae","nom_prenom_ae","login_ce",'
+                        f'"district_ae") VALUES ({ph},{ph},NULL,{ph})',
+                        (c, c, d))        # nom = code
+            bilan["crees"] += 1
+            if d is None:
+                bilan["crees_sans_district"] += 1
+        elif row[0] is None and d is not None:
+            cur.execute(f'UPDATE "agent" SET "district_ae"={ph} '
+                        f'WHERE "login_ae"={ph} AND "district_ae" IS NULL', (d, c))
+            bilan["districts_poses"] += 1
     conn.commit()
-    return ajoutes
+    return bilan
+
+
+def synchroniser_agents(conn) -> int:
+    """Dénombrement : voir `synchroniser_agents_detail`. Renvoie le nombre
+    d'agents créés (contrat d'origine, attendu par les appelants)."""
+    return synchroniser_agents_detail(conn)["crees"]
 
 
 def noms_agents(conn) -> dict:
@@ -200,50 +362,82 @@ _ALIAS_AGENT = {"login_ae": ("login_ae",),
 # ---------------------------------------------------------------------------
 # Transcription (UPSERT) depuis les deux Excel
 # ---------------------------------------------------------------------------
-def _upsert_chef(conn, login_ce, nom):
-    """Renvoie 'ajoute' | 'modifie' | 'inchange'."""
+def _upsert_chef(conn, login_ce, nom, district=None):
+    """Renvoie (état, district_pose, conflit).
+
+    `état` : 'ajoute' | 'modifie' | 'inchange' — comme avant.
+    `district_pose` : True si le district vient d'être renseigné.
+    `conflit` : le district DÉJÀ enregistré s'il diffère de celui demandé —
+    auquel cas il est CONSERVÉ. Un téléversement ne déplace pas une équipe d'un
+    district à un autre sans qu'on le dise.
+    """
     ph = db_source._placeholder(conn)
     cur = conn.cursor()
-    cur.execute(f'SELECT "nom_prenom_ce" FROM "chef_equipe" WHERE "login_ce"={ph}',
-                (login_ce,))
+    cur.execute(f'SELECT "nom_prenom_ce","district_ce" FROM "chef_equipe" '
+                f'WHERE "login_ce"={ph}', (login_ce,))
     row = cur.fetchone()
     if row is None:
-        cur.execute('INSERT INTO "chef_equipe" ("login_ce","nom_prenom_ce") '
-                    f'VALUES ({ph},{ph})', (login_ce, nom))
-        return "ajoute"
+        cur.execute('INSERT INTO "chef_equipe" ("login_ce","nom_prenom_ce",'
+                    f'"district_ce") VALUES ({ph},{ph},{ph})',
+                    (login_ce, nom, district))
+        return "ajoute", district is not None, None
+
+    actuel = row[1]
+    conflit = (actuel if (district is not None and actuel is not None
+                          and int(actuel) != int(district)) else None)
+    poser = district is not None and actuel is None
+    if poser:
+        cur.execute(f'UPDATE "chef_equipe" SET "district_ce"={ph} '
+                    f'WHERE "login_ce"={ph}', (district, login_ce))
     if row[0] != nom:
         cur.execute(f'UPDATE "chef_equipe" SET "nom_prenom_ce"={ph} '
                     f'WHERE "login_ce"={ph}', (nom, login_ce))
-        return "modifie"
-    return "inchange"
+        return "modifie", poser, conflit
+    return ("modifie" if poser else "inchange"), poser, conflit
 
 
-def _upsert_agent(conn, login_ae, nom, login_ce):
+def _upsert_agent(conn, login_ae, nom, login_ce, district=None):
+    """Renvoie (état, district_pose, conflit) — voir `_upsert_chef`."""
     ph = db_source._placeholder(conn)
     cur = conn.cursor()
-    cur.execute('SELECT "nom_prenom_ae","login_ce" FROM "agent" '
+    cur.execute('SELECT "nom_prenom_ae","login_ce","district_ae" FROM "agent" '
                 f'WHERE "login_ae"={ph}', (login_ae,))
     row = cur.fetchone()
     if row is None:
-        cur.execute('INSERT INTO "agent" ("login_ae","nom_prenom_ae","login_ce") '
-                    f'VALUES ({ph},{ph},{ph})', (login_ae, nom, login_ce))
-        return "ajoute"
+        cur.execute('INSERT INTO "agent" ("login_ae","nom_prenom_ae","login_ce",'
+                    f'"district_ae") VALUES ({ph},{ph},{ph},{ph})',
+                    (login_ae, nom, login_ce, district))
+        return "ajoute", district is not None, None
+
+    actuel = row[2]
+    conflit = (actuel if (district is not None and actuel is not None
+                          and int(actuel) != int(district)) else None)
+    poser = district is not None and actuel is None
+    if poser:
+        cur.execute(f'UPDATE "agent" SET "district_ae"={ph} '
+                    f'WHERE "login_ae"={ph}', (district, login_ae))
     if row[0] != nom or (row[1] or "") != (login_ce or ""):
         cur.execute(f'UPDATE "agent" SET "nom_prenom_ae"={ph},"login_ce"={ph} '
                     f'WHERE "login_ae"={ph}', (nom, login_ce, login_ae))
-        return "modifie"
-    return "inchange"
+        return "modifie", poser, conflit
+    return ("modifie" if poser else "inchange"), poser, conflit
 
 
 def _bilan_vide():
     return {"ajoutes": 0, "modifies": 0, "inchanges": 0}
 
 
-def transcrire(conn, chemin_chef_xlsx, chemin_agent_xlsx):
+def transcrire(conn, chemin_chef_xlsx, chemin_agent_xlsx, district=None):
     """Transcrit les deux Excel vers `chef_equipe` puis `agent` (upsert).
+
+    `district` : code du district d'affectation de celui qui téléverse. Il n'est
+    PAS dans le fichier — le modèle Excel ne change pas — mais on le connaît par
+    son compte. Posé sur les fiches créées et sur celles dont le district est
+    vide ; jamais substitué à un district différent déjà enregistré.
 
     Renvoie un dict :
         {"chefs": {ajoutes,modifies,inchanges}, "agents": {...},
+         "districts_poses": int, "conflits": [(type, login, district_enregistré)],
          "erreurs": [(fichier, ligne, message), ...]}
     Lève ValueError si un fichier a des colonnes manquantes (rien n'est écrit).
     Les CE sont transcrits AVANT les agents (cible des clés étrangères)."""
@@ -257,7 +451,8 @@ def transcrire(conn, chemin_chef_xlsx, chemin_agent_xlsx):
         raise ValueError("Fichier des Agents — colonnes manquantes : "
                          + ", ".join(manq_a))
 
-    res = {"chefs": _bilan_vide(), "agents": _bilan_vide(), "erreurs": []}
+    res = {"chefs": _bilan_vide(), "agents": _bilan_vide(), "erreurs": [],
+           "districts_poses": 0, "conflits": []}
     # 1) Chefs d'équipe
     vus_ce = set()
     for n, ligne in enumerate(chefs, start=2):
@@ -270,7 +465,11 @@ def transcrire(conn, chemin_chef_xlsx, chemin_agent_xlsx):
             res["erreurs"].append(("Chefs d'Équipe", n,
                                    f"nom et prénom vides (login_ce={login_ce})"))
             continue
-        res["chefs"][_upsert_chef(conn, login_ce, nom) + "s"] += 1
+        etat, pose, conflit = _upsert_chef(conn, login_ce, nom, district)
+        res["chefs"][etat + "s"] += 1
+        res["districts_poses"] += 1 if pose else 0
+        if conflit is not None:
+            res["conflits"].append(("Chef d'Équipe", login_ce, conflit))
         vus_ce.add(login_ce)
     # 2) Agents (login_ce doit exister — dans le fichier CE ou déjà en base)
     for n, ligne in enumerate(agents, start=2):
@@ -293,7 +492,12 @@ def transcrire(conn, chemin_chef_xlsx, chemin_agent_xlsx):
                                    f"chef d'équipe inconnu : {login_ce} "
                                    f"(agent {login_ae})"))
             continue
-        res["agents"][_upsert_agent(conn, login_ae, nom, login_ce) + "s"] += 1
+        etat, pose, conflit = _upsert_agent(conn, login_ae, nom, login_ce,
+                                           district)
+        res["agents"][etat + "s"] += 1
+        res["districts_poses"] += 1 if pose else 0
+        if conflit is not None:
+            res["conflits"].append(("Agent", login_ae, conflit))
     conn.commit()
     return res
 
@@ -363,9 +567,14 @@ def page_choix_traitement(district_txt) -> str:
          f'<div class="note">District d’affectation : <b>{ESC(district_txt)}</b>.</div>',
          '<div class="choix">',
          '<a class="ca" href="/choix">'
-         '<div class="ic">📊</div><div class="t">Tableau de bord (suivi)</div>'
+         '<div class="ic">📊</div><div class="t">Tableau de bord — Dénombrement</div>'
          '<div class="d">Consulter le rapport de suivi du dénombrement pour votre '
          'district.</div><div class="go">Ouvrir →</div></a>',
+         '<a class="ca" href="/equipes">'
+         '<div class="ic">👥</div><div class="t">Chefs d’équipe et agents</div>'
+         '<div class="d">Consulter, corriger ou supprimer les fiches des CE et '
+         'des agents enquêteurs de votre district.</div>'
+         '<div class="go">Ouvrir →</div></a>',
          '<a class="ca" href="/equipe">'
          '<div class="ic">👔</div><div class="t">Équipe technique</div>'
          '<div class="d">Consulter l’encadrement (Coordonnateur régional, '
@@ -408,15 +617,34 @@ def _table_bilan(res) -> str:
             + ligne("Agents", res["agents"]) + '</table>')
 
 
-def page_equipes(conn, district_txt, resultat=None, message=None, erreur=None) -> str:
-    """Formulaire de téléversement des deux Excel + bilan de la transcription."""
-    n = compter(conn)
+def page_equipes(conn, district_txt, resultat=None, message=None, erreur=None,
+                 district=None) -> str:
+    """Formulaire de téléversement des deux Excel + bilan de la transcription.
+
+    `district` : code du district d'affectation. Les nombres affichés lui sont
+    bornés — sans cela on montrait les totaux de toute la base à quelqu'un qui
+    ne travaille que sur un district.
+    """
+    n = compter(conn, district)
     h = [_entete(),
          '<p style="margin:0 0 6px"><a href="/traitement">← Accueil Traitement</a></p>',
          '<h1>Base des Chefs d’Équipe et des Agents</h1>',
          f'<div class="note">District d’affectation : <b>{ESC(district_txt)}</b>. '
-         f'Actuellement en base : <b>{n["chefs"]}</b> chef(s) d’équipe et '
+         + (f'Actuellement en base <b>pour ce district</b> : '
+            if n.get("district") is not None else 'Actuellement en base : ')
+         + f'<b>{n["chefs"]}</b> chef(s) d’équipe et '
          f'<b>{n["agents"]}</b> agent(s).</div>']
+    # Les fiches sans district n'apparaissent dans aucun district : le signaler
+    # evite de croire que le televersement a echoue.
+    _orphelines = n.get("chefs_sans_district", 0) + n.get("agents_sans_district", 0)
+    if n.get("district") is not None and _orphelines:
+        h.append(
+            f'<div class="err">⚠️ <b>{_orphelines} fiche(s) sans district</b> '
+            f'en base ({n["chefs_sans_district"]} chef(s) d’équipe, '
+            f'{n["agents_sans_district"]} agent(s)) : elles n’apparaissent dans '
+            f'<b>aucun</b> district, donc pas ci-dessus. Elles ont été chargées '
+            f'avant le remplissage automatique du district, ou par un compte '
+            f'sans affectation.</div>')
     if message:
         h.append(f'<div class="msg">{ESC(message)}</div>')
     if erreur:
